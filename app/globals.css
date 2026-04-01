@@ -217,3 +217,13 @@
   .ldg-tab .ldg-tab-full { display: none; }
   .ldg-tab .ldg-tab-short { display: inline; }
 }
+
+/* ── Standalone PWA: safe area already excluded from viewport ── */
+@media (max-width: 640px) and (display-mode: standalone) {
+  .ldg-tabnav {
+    padding-bottom: 0;
+  }
+  body {
+    padding-bottom: 3rem;
+  }
+}
