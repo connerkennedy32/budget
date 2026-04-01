@@ -314,6 +314,9 @@ const CSS = `
     font-feature-settings: 'tnum';
     font-size: 0.8rem;
   }
+  .ldg-bracket-total {
+    display: contents;
+  }
   .ldg-bracket-total > * {
     padding: 0.45rem 0;
     border-top: 1px solid var(--gold);
