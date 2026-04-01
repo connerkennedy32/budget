@@ -70,7 +70,9 @@ export default function RootLayout({
         <ThemeProvider>
           <ServiceWorkerRegistration />
           <TabNav />
-          {children}
+          <div data-scroll-container className="flex-1 min-h-0">
+            {children}
+          </div>
         </ThemeProvider>
       </body>
     </html>

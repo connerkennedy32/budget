@@ -131,6 +131,11 @@
 
 @media (max-width: 640px) {
   body {
+    overflow: hidden;
+  }
+  [data-scroll-container] {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     padding-bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
   }
 }
@@ -194,8 +199,6 @@
     padding-bottom: env(safe-area-inset-bottom, 0);
     justify-content: space-around;
     overflow-x: visible;
-    -webkit-transform: translateZ(0);
-    transform: translateZ(0);
   }
   .ldg-tabnav::after { display: none; }
   .ldg-tab {
@@ -230,7 +233,7 @@
   .ldg-tabnav {
     padding-bottom: 0;
   }
-  body {
+  [data-scroll-container] {
     padding-bottom: 3rem;
   }
 }
