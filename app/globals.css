@@ -134,3 +134,86 @@
     padding-bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ── Tab Navigation: Desktop top bar ── */
+.ldg-tabnav {
+  background: #0A0806;
+  border-bottom: 1px solid #28200F;
+  display: flex;
+  padding: env(safe-area-inset-top, 0) 1rem 0;
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.ldg-tabnav::-webkit-scrollbar { display: none; }
+.ldg-tabnav::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(0deg, transparent, transparent 47px, rgba(200,149,42,0.03) 47px, rgba(200,149,42,0.03) 48px);
+  pointer-events: none;
+}
+.ldg-tab {
+  font-family: 'Figtree', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.85rem 0.9rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  text-decoration: none;
+  color: #6B5C45;
+  transition: color 0.15s, border-color 0.15s;
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ldg-tab:hover { color: #F0E8D8; }
+.ldg-tab-active { color: #C8952A; border-bottom-color: #C8952A; }
+
+.ldg-tab-icon { display: none; }
+.ldg-tab .ldg-tab-short { display: none; }
+.ldg-tab .ldg-tab-full { display: inline; }
+
+/* ── Tab Navigation: Mobile bottom bar ── */
+@media (max-width: 640px) {
+  .ldg-tabnav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    border-bottom: none;
+    border-top: 1px solid #28200F;
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    justify-content: space-around;
+    overflow-x: visible;
+  }
+  .ldg-tabnav::after { display: none; }
+  .ldg-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.4rem 0.25rem 0.25rem;
+    border-bottom: none;
+    margin-bottom: 0;
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    flex: 1;
+    min-width: 0;
+  }
+  .ldg-tab-active {
+    border-bottom: none;
+    color: #C8952A;
+  }
+  .ldg-tab-icon { display: block; }
+  .ldg-tab .ldg-tab-full { display: none; }
+  .ldg-tab .ldg-tab-short { display: inline; }
+}
