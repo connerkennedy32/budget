@@ -121,7 +121,8 @@ export function TabNav() {
             top: auto;
             border-bottom: none;
             border-top: 1px solid #28200F;
-            padding: 0 0 env(safe-area-inset-bottom, 0);
+            padding: 0;
+            padding-bottom: env(safe-area-inset-bottom, 0);
             justify-content: space-around;
             overflow-x: visible;
           }
@@ -130,8 +131,8 @@ export function TabNav() {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 0.2rem;
-            padding: 0.5rem 0.25rem 0.35rem;
+            gap: 0.15rem;
+            padding: 0.4rem 0.25rem 0.25rem;
             border-bottom: none;
             margin-bottom: 0;
             font-size: 0.6rem;
