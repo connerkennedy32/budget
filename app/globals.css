@@ -194,6 +194,8 @@
     padding-bottom: env(safe-area-inset-bottom, 0);
     justify-content: space-around;
     overflow-x: visible;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
   }
   .ldg-tabnav::after { display: none; }
   .ldg-tab {
@@ -218,7 +220,12 @@
   .ldg-tab .ldg-tab-short { display: inline; }
 }
 
-/* ── Standalone PWA: safe area already excluded from viewport ── */
+/* ── Standalone PWA: account for status bar and home indicator ── */
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top, 0);
+  }
+}
 @media (max-width: 640px) and (display-mode: standalone) {
   .ldg-tabnav {
     padding-bottom: 0;

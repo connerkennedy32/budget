@@ -50,8 +50,6 @@ function saveEntries(entries: Entry[]) {
 }
 
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Figtree:wght@300;400;500;600;700&display=swap');
-
   .ldg {
     --gold: #C8952A;
     --gold-soft: rgba(200, 149, 42, 0.12);
