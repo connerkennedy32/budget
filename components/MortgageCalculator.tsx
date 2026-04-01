@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 const DOWN_PAYMENT_STEP = 10_000;
-const DOWN_PAYMENT_ROWS = 15;
+const DOWN_PAYMENT_ROWS = 25;
 const RATE_STEP = 0.05;
 const RATE_COLS = 91;
 const LOAN_TERM = 30;
@@ -296,7 +296,7 @@ function InlineEdit({
 export function MortgageCalculator() {
   const [homePrice, setHomePrice] = useState("");
   const [startDown, setStartDown] = useState("0");
-  const [startRate, setStartRate] = useState("6.00");
+  const [startRate, setStartRate] = useState("5.75");
   const [error, setError] = useState("");
   const [tableData, setTableData] = useState<TableData | null>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
@@ -308,7 +308,7 @@ export function MortgageCalculator() {
   useEffect(() => {
     const price = localStorage.getItem("homePrice") ?? "";
     const down = localStorage.getItem("startDown") ?? "0";
-    const rate = localStorage.getItem("startRate") ?? "6.00";
+    const rate = localStorage.getItem("startRate") ?? "5.75";
     setHomePrice(price);
     setStartDown(down);
     setStartRate(rate);
@@ -426,7 +426,10 @@ export function MortgageCalculator() {
                           <td
                             onClick={() => toggleRow(rowIdx)}
                             style={{
-                              background: isSelectedRow ? "var(--gold-soft)" : "var(--surface)",
+                              position: "sticky",
+                              left: 0,
+                              zIndex: 10,
+                              background: isSelectedRow ? "#28200d" : "var(--surface)",
                               color: isSelectedRow ? "var(--gold)" : "var(--text)",
                             }}
                           >
