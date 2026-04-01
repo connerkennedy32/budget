@@ -348,12 +348,15 @@ const CSS = `
   .ldg-error { font-size: 0.8rem; color: var(--red); align-self: flex-end; padding-bottom: 0.7rem; }
 
   @media (max-width: 700px) {
+    .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
     .ldg-stat-grid { grid-template-columns: 1fr; }
     .ldg-form-row { flex-direction: column !important; align-items: stretch !important; }
+    .ldg-input-wrap { width: 100%; }
     .ldg-input-desc, .ldg-input-amount, .ldg-select { width: 100% !important; }
     .ldg-budget-grid { grid-template-columns: 1fr !important; }
     .ldg-entry-row { grid-template-columns: 1fr auto auto auto; }
     .ldg-entry-cat { display: none; }
+    .ldg-btn { width: 100%; align-self: stretch; }
   }
 `;
 

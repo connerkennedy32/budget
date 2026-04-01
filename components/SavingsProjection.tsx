@@ -268,9 +268,12 @@ const CSS = `
   }
 
   @media (max-width: 700px) {
+    .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
     .ldg-milestone-grid { grid-template-columns: repeat(2, 1fr); }
     .ldg-form-row { flex-direction: column !important; align-items: stretch !important; }
     .ldg-input { width: 100% !important; }
+    .ldg-input-wrap { width: 100%; }
+    .ldg-long-grid { grid-template-columns: 1fr !important; }
   }
 `;
 
@@ -376,7 +379,7 @@ export function SavingsProjection() {
               </div>
 
               {/* Longer-term cards + table */}
-              <div className="ldg-appear ldg-d2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem", marginBottom: "1.5rem" }}>
+              <div className="ldg-appear ldg-d2 ldg-long-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem", marginBottom: "1.5rem" }}>
 
                 {/* Long-term milestones */}
                 <div className="ldg-card">

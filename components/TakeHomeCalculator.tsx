@@ -314,6 +314,14 @@ const CSS = `
     .ldg-stat-grid { grid-template-columns: 1fr; }
     .ldg-detail-grid { grid-template-columns: 1fr !important; }
   }
+
+  @media (max-width: 640px) {
+    .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
+    .ldg-salary-row { flex-direction: column !important; align-items: stretch !important; }
+    .ldg-input-wrap { width: 100%; }
+    .ldg-input { width: 100% !important; font-size: 1rem !important; }
+    .ldg-btn { width: 100%; }
+  }
 `;
 
 export function TakeHomeCalculator() {
@@ -358,7 +366,7 @@ export function TakeHomeCalculator() {
           </div>
 
           {/* Input row */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginBottom: result ? "3.5rem" : 0 }}>
+          <div className="ldg-salary-row" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginBottom: result ? "3.5rem" : 0 }}>
             <div className="ldg-input-wrap">
               <span className="ldg-input-prefix">$</span>
               <input

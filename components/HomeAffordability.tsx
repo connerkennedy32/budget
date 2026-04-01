@@ -218,9 +218,8 @@ function AffordableChart({ pts, housePrice, displayMax }: {
   const crossIdx = pts.findIndex(p => p.price >= housePrice);
   const fmtY = (v: number) => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : `$${(v / 1_000).toFixed(0)}k`;
 
-  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const svgX = ((e.clientX - rect.left) / rect.width) * W;
+  function handlePointer(clientX: number, rect: DOMRect) {
+    const svgX = ((clientX - rect.left) / rect.width) * W;
     if (svgX < PAD.l || svgX > W - PAD.r) { setHoverIdx(null); return; }
     const approxMonth = (svgX - PAD.l) / cW * displayMax;
     let nearest = 0, minDist = Infinity;
@@ -229,6 +228,16 @@ function AffordableChart({ pts, housePrice, displayMax }: {
       if (d < minDist) { minDist = d; nearest = i; }
     });
     setHoverIdx(nearest);
+  }
+
+  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    handlePointer(e.clientX, e.currentTarget.getBoundingClientRect());
+  }
+
+  function handleTouchMove(e: React.TouchEvent<SVGSVGElement>) {
+    if (e.touches.length > 0) {
+      handlePointer(e.touches[0].clientX, e.currentTarget.getBoundingClientRect());
+    }
   }
 
   const hov = hoverIdx !== null ? pts[hoverIdx] : null;
@@ -242,6 +251,8 @@ function AffordableChart({ pts, housePrice, displayMax }: {
       style={{ width: "100%", display: "block", cursor: "crosshair" }}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => setHoverIdx(null)}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={() => setHoverIdx(null)}
     >
       {yTicks.map((v, i) => (
         <line key={i} x1={PAD.l} x2={W - PAD.r} y1={toY(v)} y2={toY(v)} stroke="rgba(200,149,42,0.07)" strokeWidth={1} />
@@ -453,10 +464,15 @@ const CSS = `
   .ldg-divider { border: none; border-top: 1px solid var(--border); margin: 0.5rem 0 1rem; }
 
   @media (max-width: 720px) {
+    .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
     .ldg-stat-grid { grid-template-columns: 1fr 1fr; }
     .ldg-two-col   { grid-template-columns: 1fr !important; }
     .ldg-form-row  { flex-direction: column !important; }
-    .ldg-input     { width: 100% !important; }
+    .ldg-input-wrap { width: 100%; }
+    .ldg-input     { width: 100% !important; font-size: 1rem !important; }
+  }
+  @media (max-width: 480px) {
+    .ldg-stat-grid { grid-template-columns: 1fr; }
   }
 `;
 

@@ -232,6 +232,14 @@ const CSS = `
   }
   .ldg-tbl-sel-col { background: var(--gold-soft) !important; color: var(--gold) !important; }
   .ldg-tbl-sel-row td:first-child { background: var(--gold-soft) !important; color: var(--gold) !important; }
+
+  @media (max-width: 640px) {
+    .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
+    .ldg-mortgage-row { flex-direction: column !important; align-items: stretch !important; }
+    .ldg-input-wrap { width: 100%; }
+    .ldg-input { width: 100% !important; }
+    .ldg-btn { width: 100%; }
+  }
 `;
 
 function InlineEdit({
@@ -348,7 +356,7 @@ export function MortgageCalculator() {
           </div>
 
           {/* Input row */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginBottom: tableData ? "2rem" : 0 }}>
+          <div className="ldg-mortgage-row" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginBottom: tableData ? "2rem" : 0 }}>
             <div className="ldg-input-wrap">
               <span className="ldg-input-prefix">$</span>
               <input

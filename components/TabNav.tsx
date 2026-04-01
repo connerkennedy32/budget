@@ -20,11 +20,15 @@ export function TabNav() {
           background: #0A0806;
           border-bottom: 1px solid #28200F;
           display: flex;
-          padding: 0 1.5rem;
+          padding: 0 1rem;
           position: relative;
           z-index: 10;
           flex-shrink: 0;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;
         }
+        .ldg-tabnav::-webkit-scrollbar { display: none; }
         .ldg-tabnav::after {
           content: '';
           position: absolute;
@@ -38,7 +42,7 @@ export function TabNav() {
           font-weight: 600;
           letter-spacing: 0.12em;
           text-transform: uppercase;
-          padding: 0.85rem 1rem;
+          padding: 0.85rem 0.9rem;
           border-bottom: 2px solid transparent;
           margin-bottom: -1px;
           text-decoration: none;
@@ -46,6 +50,8 @@ export function TabNav() {
           transition: color 0.15s, border-color 0.15s;
           position: relative;
           z-index: 1;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
         .ldg-tab:hover { color: #F0E8D8; }
         .ldg-tab-active { color: #C8952A; border-bottom-color: #C8952A; }
