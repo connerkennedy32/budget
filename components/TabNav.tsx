@@ -20,7 +20,7 @@ export function TabNav() {
           background: #0A0806;
           border-bottom: 1px solid #28200F;
           display: flex;
-          padding: 0 1rem;
+          padding: env(safe-area-inset-top, 0) 1rem 0;
           position: relative;
           z-index: 10;
           flex-shrink: 0;
