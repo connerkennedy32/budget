@@ -128,3 +128,9 @@
     @apply font-sans;
   }
 }
+
+@media (max-width: 640px) {
+  body {
+    padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}

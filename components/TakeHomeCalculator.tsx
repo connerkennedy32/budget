@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react";
 
-// 2026 federal income tax brackets — married filing jointly (Rev. Proc. 2025-32)
-const BRACKETS = [
+type FilingStatus = "mfj" | "single";
+
+// 2026 federal income tax brackets (Rev. Proc. 2025-32)
+const BRACKETS_MFJ = [
   { rate: 0.10, upTo: 24_800 },
   { rate: 0.12, upTo: 100_800 },
   { rate: 0.22, upTo: 211_400 },
@@ -13,18 +15,31 @@ const BRACKETS = [
   { rate: 0.37, upTo: Infinity },
 ];
 
-const STANDARD_DEDUCTION = 32_200;
+const BRACKETS_SINGLE = [
+  { rate: 0.10, upTo: 12_400 },
+  { rate: 0.12, upTo: 50_400 },
+  { rate: 0.22, upTo: 105_700 },
+  { rate: 0.24, upTo: 201_775 },
+  { rate: 0.32, upTo: 256_225 },
+  { rate: 0.35, upTo: 384_350 },
+  { rate: 0.37, upTo: Infinity },
+];
+
+const TAX_CONFIG = {
+  mfj: { brackets: BRACKETS_MFJ, standardDeduction: 32_200, addMedicareThreshold: 250_000 },
+  single: { brackets: BRACKETS_SINGLE, standardDeduction: 16_100, addMedicareThreshold: 200_000 },
+};
+
 const SS_RATE = 0.062;
 const SS_WAGE_BASE = 168_600;
 const MEDICARE_RATE = 0.0145;
 const ADD_MEDICARE_RATE = 0.009;
-const ADD_MEDICARE_THRESHOLD = 250_000;
 const UT_STATE_RATE = 0.045;
 
-function calcFederalTax(taxableIncome: number): number {
+function calcFederalTax(taxableIncome: number, brackets: typeof BRACKETS_MFJ): number {
   let tax = 0;
   let prev = 0;
-  for (const bracket of BRACKETS) {
+  for (const bracket of brackets) {
     if (taxableIncome <= prev) break;
     const taxable = Math.min(taxableIncome, bracket.upTo) - prev;
     tax += taxable * bracket.rate;
@@ -33,11 +48,11 @@ function calcFederalTax(taxableIncome: number): number {
   return tax;
 }
 
-function calcFICA(grossIncome: number): { ss: number; medicare: number } {
+function calcFICA(grossIncome: number, addMedicareThreshold: number): { ss: number; medicare: number } {
   const ss = Math.min(grossIncome, SS_WAGE_BASE) * SS_RATE;
   const medicare =
     grossIncome * MEDICARE_RATE +
-    Math.max(0, grossIncome - ADD_MEDICARE_THRESHOLD) * ADD_MEDICARE_RATE;
+    Math.max(0, grossIncome - addMedicareThreshold) * ADD_MEDICARE_RATE;
   return { ss, medicare };
 }
 
@@ -60,11 +75,12 @@ interface TaxResult {
   brackets: { rate: number; amount: number; tax: number }[];
 }
 
-function calculate(grossAnnual: number): TaxResult {
-  const taxableIncome = Math.max(0, grossAnnual - STANDARD_DEDUCTION);
-  const federalTax = calcFederalTax(taxableIncome);
+function calculate(grossAnnual: number, filing: FilingStatus): TaxResult {
+  const config = TAX_CONFIG[filing];
+  const taxableIncome = Math.max(0, grossAnnual - config.standardDeduction);
+  const federalTax = calcFederalTax(taxableIncome, config.brackets);
   const stateTax = grossAnnual * UT_STATE_RATE;
-  const { ss, medicare } = calcFICA(grossAnnual);
+  const { ss, medicare } = calcFICA(grossAnnual, config.addMedicareThreshold);
   const totalTax = federalTax + stateTax + ss + medicare;
   const takeHome = grossAnnual - totalTax;
   const monthlyTakeHome = takeHome / 12;
@@ -75,7 +91,7 @@ function calculate(grossAnnual: number): TaxResult {
   const effectiveRate = (totalTax / grossAnnual) * 100;
 
   let prev = 0;
-  const brackets = BRACKETS.map((b) => {
+  const brackets = config.brackets.map((b) => {
     const amount = Math.max(0, Math.min(taxableIncome, b.upTo) - prev);
     prev = b.upTo;
     return { rate: b.rate, amount, tax: amount * b.rate };
@@ -83,7 +99,7 @@ function calculate(grossAnnual: number): TaxResult {
 
   return {
     gross: grossAnnual,
-    standardDeduction: STANDARD_DEDUCTION,
+    standardDeduction: config.standardDeduction,
     taxableIncome,
     federalTax,
     stateTax,
@@ -315,6 +331,34 @@ const CSS = `
     .ldg-detail-grid { grid-template-columns: 1fr !important; }
   }
 
+  .ldg-toggle-wrap {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .ldg-toggle-btn {
+    font-family: 'Figtree', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    padding: 0.55rem 1.1rem;
+    border: none;
+    cursor: pointer;
+    background: transparent;
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+  }
+  .ldg-toggle-btn + .ldg-toggle-btn {
+    border-left: 1px solid var(--border);
+  }
+  .ldg-toggle-btn.active {
+    background: var(--gold-soft);
+    color: var(--gold);
+    font-weight: 600;
+  }
+
   @media (max-width: 640px) {
     .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
     .ldg-salary-row { flex-direction: column !important; align-items: stretch !important; }
@@ -326,17 +370,25 @@ const CSS = `
 
 export function TakeHomeCalculator() {
   const [salary, setSalary] = useState("");
+  const [filing, setFiling] = useState<FilingStatus>("mfj");
   const [result, setResult] = useState<TaxResult | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const savedFiling = localStorage.getItem("takeHomeFiling") as FilingStatus | null;
+    if (savedFiling === "mfj" || savedFiling === "single") setFiling(savedFiling);
     const saved = localStorage.getItem("takeHomeSalary");
     if (saved) {
       setSalary(saved);
       const val = parseFloat(saved.replace(/,/g, ""));
-      if (!isNaN(val) && val > 0) setResult(calculate(val));
+      if (!isNaN(val) && val > 0) setResult(calculate(val, savedFiling === "single" ? "single" : "mfj"));
     }
   }, []);
+
+  function recalculate(sal: string, fil: FilingStatus) {
+    const val = parseFloat(sal.replace(/,/g, ""));
+    if (!isNaN(val) && val > 0) setResult(calculate(val, fil));
+  }
 
   function handleCalculate() {
     setError("");
@@ -346,7 +398,13 @@ export function TakeHomeCalculator() {
       return;
     }
     localStorage.setItem("takeHomeSalary", salary);
-    setResult(calculate(val));
+    setResult(calculate(val, filing));
+  }
+
+  function handleFilingChange(status: FilingStatus) {
+    setFiling(status);
+    localStorage.setItem("takeHomeFiling", status);
+    recalculate(salary, status);
   }
 
   return (
@@ -358,11 +416,19 @@ export function TakeHomeCalculator() {
           {/* Header */}
           <div style={{ marginBottom: "2.75rem" }}>
             <p className="ldg-mono" style={{ fontSize: "0.68rem", letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--gold)", marginBottom: "0.6rem" }}>
-              2026 · Married Filing Jointly · Utah
+              2026 · {filing === "mfj" ? "Married Filing Jointly" : "Single"} · Utah
             </p>
             <h1 className="ldg-serif" style={{ fontSize: "clamp(2rem, 4vw, 3rem)", fontWeight: 600, lineHeight: 1.1, margin: 0 }}>
               Take-Home Calculator
             </h1>
+          </div>
+
+          {/* Filing status toggle */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <div className="ldg-toggle-wrap">
+              <button className={`ldg-toggle-btn${filing === "mfj" ? " active" : ""}`} onClick={() => handleFilingChange("mfj")}>Married Filing Jointly</button>
+              <button className={`ldg-toggle-btn${filing === "single" ? " active" : ""}`} onClick={() => handleFilingChange("single")}>Single</button>
+            </div>
           </div>
 
           {/* Input row */}
