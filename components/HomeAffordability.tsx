@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 // ── Tax constants (2026, Married Filing Jointly, Utah) ────────────────────────
 const BRACKETS = [
@@ -185,6 +185,80 @@ function calcAffordability(
     monthlyAfterMortgage, dtiRatio,
     rows, alreadyAffordable, targetMonthlyImpossible,
   };
+}
+
+// ── Goal seek ─────────────────────────────────────────────────────────────────
+type GoalSeekField = 'salary' | 'housePrice' | 'startingSavings' | 'targetMonthly' | 'investRate';
+
+const GOAL_SEEK_LABELS: Record<GoalSeekField, string> = {
+  salary: 'Annual Salary',
+  housePrice: 'House Price',
+  startingSavings: 'Starting Savings',
+  targetMonthly: 'Target Monthly (PITI)',
+  investRate: 'Investment Return',
+};
+
+function goalSeekCalc(
+  targetMonths: number,
+  field: GoalSeekField,
+  salary: number,
+  housePrice: number,
+  mortgageRate: number,
+  startingSavings: number,
+  saleProceeds: number,
+  monthlyExpenses: number,
+  targetMonthly: number,
+  investRate: number,
+): number | null {
+  function evalMonths(v: number): number {
+    let s = salary, hp = housePrice, ss = startingSavings, tm = targetMonthly, ir = investRate;
+    if (field === 'salary') s = v;
+    else if (field === 'housePrice') hp = v;
+    else if (field === 'startingSavings') ss = v;
+    else if (field === 'targetMonthly') tm = v;
+    else if (field === 'investRate') ir = v;
+    if (s <= 0 || hp <= 0 || mortgageRate <= 0 || tm <= 0) return 361;
+    const r = calcAffordability(s, hp, mortgageRate, ss, saleProceeds, monthlyExpenses, tm, ir);
+    if (r.alreadyAffordable) return 0;
+    return r.monthsToGoal ?? 361;
+  }
+
+  // inverse: higher value → fewer months
+  const isInverse = field === 'salary' || field === 'startingSavings' || field === 'targetMonthly' || field === 'investRate';
+
+  const bounds: Record<GoalSeekField, [number, number]> = {
+    salary:         [0,       3_000_000],
+    housePrice:     [50_000, 10_000_000],
+    startingSavings:[0,       5_000_000],
+    targetMonthly:  [100,        50_000],
+    investRate:     [0,              30],
+  };
+
+  let [lo, hi] = bounds[field];
+
+  if (isInverse) {
+    if (evalMonths(hi) > targetMonths) return null; // even max value can't hit target
+    if (evalMonths(lo) <= targetMonths) return lo;  // already achievable at minimum
+    // Find smallest x where evalMonths(x) <= targetMonths
+    for (let i = 0; i < 80; i++) {
+      if (hi - lo <= (field === 'investRate' ? 0.01 : 1)) break;
+      const mid = (lo + hi) / 2;
+      if (evalMonths(mid) <= targetMonths) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  } else {
+    if (evalMonths(lo) > targetMonths) return null; // even minimum exceeds target
+    if (evalMonths(hi) <= targetMonths) return hi;  // maximum still achievable
+    // Find largest x where evalMonths(x) <= targetMonths
+    for (let i = 0; i < 80; i++) {
+      if (hi - lo <= 1) break;
+      const mid = (lo + hi) / 2;
+      if (evalMonths(mid) <= targetMonths) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  }
 }
 
 // ── Affordable price chart ────────────────────────────────────────────────────
@@ -461,18 +535,128 @@ const CSS = `
 
   .ldg-divider { border: none; border-top: 1px solid var(--border); margin: 0.5rem 0 1rem; }
 
+  /* Stepper buttons */
+  .ldg-step-btns {
+    display: flex; flex-direction: column; gap: 1px; flex-shrink: 0;
+  }
+  .ldg-step-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+    cursor: pointer; width: 22px; flex: 1; display: flex; align-items: center;
+    justify-content: center; font-size: 0.5rem; border-radius: 2px; padding: 0;
+    line-height: 1; user-select: none;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .ldg-step-btn:hover { background: var(--gold-soft); color: var(--gold); border-color: var(--gold-border); }
+  .ldg-step-btn:active { background: rgba(200,149,42,0.22); }
+
+  /* Goal seek — embedded in answer card */
+  .ldg-gs-embed {
+    margin-top: 1.75rem; padding-top: 1.5rem;
+    border-top: 1px solid rgba(200,149,42,0.13);
+  }
+  .achievable  .ldg-gs-embed { border-color: rgba(200,149,42,0.18); }
+  .unreachable .ldg-gs-embed { border-color: rgba(192,84,58,0.15); }
+  .now         .ldg-gs-embed { border-color: rgba(74,158,107,0.15); }
+
+  .ldg-gs-label {
+    font-size: 0.54rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: rgba(200,149,42,0.4); margin-bottom: 1.1rem;
+  }
+  .ldg-gs-sentence {
+    display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap;
+    justify-content: center; font-size: 0.82rem; color: var(--muted);
+  }
+  .ldg-gs-inline-input {
+    width: 38px; background: transparent; border: none;
+    border-bottom: 1px solid rgba(200,149,42,0.4);
+    text-align: center; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem; color: var(--text); padding: 0 0 2px; outline: none;
+  }
+  .ldg-gs-inline-input::placeholder { color: rgba(200,149,42,0.3); }
+  .ldg-gs-inline-input:focus { border-color: var(--gold); }
+  .ldg-gs-inline-select {
+    background: transparent; border: none; border-bottom: 1px solid rgba(200,149,42,0.4);
+    color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem;
+    padding: 0 1.1rem 2px 0; outline: none; cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23C8952A' fill-opacity='0.45'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 0 center;
+  }
+  .ldg-gs-inline-select:focus { border-color: var(--gold); }
+  .ldg-gs-answer {
+    margin-top: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+  }
+  .ldg-gs-answer-label {
+    font-size: 0.57rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+  }
+  .ldg-gs-answer-value {
+    font-family: 'Cormorant Garamond', serif; font-size: clamp(2rem, 6vw, 3rem);
+    font-weight: 600; color: var(--gold); line-height: 1;
+  }
+  .ldg-gs-answer-delta {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
+    color: var(--muted); margin-top: 0.15rem;
+  }
+  .ldg-gs-apply {
+    margin-top: 0.9rem; background: none; border: none; cursor: pointer; padding: 0;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--gold); opacity: 0.55;
+    transition: opacity 0.15s; display: flex; align-items: center; gap: 0.25rem;
+  }
+  .ldg-gs-apply:hover { opacity: 1; }
+  .ldg-gs-status {
+    margin-top: 0.85rem; font-size: 0.74rem; color: var(--muted); font-style: italic;
+  }
+
   @media (max-width: 720px) {
     .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
     .ldg-stat-grid { grid-template-columns: 1fr 1fr; }
     .ldg-two-col   { grid-template-columns: 1fr !important; }
-    .ldg-form-row  { flex-direction: column !important; }
-    .ldg-input-wrap { width: 100%; }
-    .ldg-input     { width: 100% !important; font-size: 1rem !important; }
+    .ldg-form-row  { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 0.75rem !important; align-items: start !important; }
+.ldg-input-wrap { width: 100%; }
+    .ldg-input     { width: 100% !important; font-size: 0.9rem !important; }
+    .ldg-step-row  { width: 100%; }
+    .ldg-step-row .ldg-input-rel { flex: 1; min-width: 0; }
   }
   @media (max-width: 480px) {
     .ldg-stat-grid { grid-template-columns: 1fr; }
   }
 `;
+
+// ── StepInput ─────────────────────────────────────────────────────────────────
+interface StepInputProps {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onStep: (direction: 1 | -1) => void;
+  prefix?: string;
+  suffix?: string;
+  placeholder?: string;
+  width?: number;
+  extraClass?: string;
+  style?: React.CSSProperties;
+}
+
+function StepInput({ value, onChange, onStep, prefix, suffix, placeholder, width = 150, extraClass = "", style }: StepInputProps) {
+  return (
+    <div className="ldg-step-row" style={{ display: "flex", alignItems: "stretch", gap: 2 }}>
+      <div className="ldg-input-rel">
+        {prefix && <span className="ldg-input-prefix">{prefix}</span>}
+        <input
+          className={`ldg-input${prefix ? " ldg-input-money" : ""}${suffix ? " ldg-input-pct" : ""} ${extraClass}`}
+          style={{ width, ...style }}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+        />
+        {suffix && <span className="ldg-input-suffix">{suffix}</span>}
+      </div>
+      <div className="ldg-step-btns">
+        <button className="ldg-step-btn" onClick={() => onStep(1)} tabIndex={-1}>▲</button>
+        <button className="ldg-step-btn" onClick={() => onStep(-1)} tabIndex={-1}>▼</button>
+      </div>
+    </div>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 interface Inputs {
@@ -505,6 +689,11 @@ export function HomeAffordability() {
     commissionRate: "6",
   });
   const [budgetEntries, setBudgetEntries] = useState<BudgetEntry[]>([]);
+  const [homeSaleOpen, setHomeSaleOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("homeSaleOpen") !== "false"; } catch { return true; }
+  });
+  const [goalMonths, setGoalMonths] = useState<string>("");
+  const [goalSeekField, setGoalSeekField] = useState<GoalSeekField | "">("");
 
   useEffect(() => {
     setBudgetEntries(loadBudgetEntries());
@@ -520,6 +709,18 @@ export function HomeAffordability() {
       setInputs(next);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     };
+  }
+
+  function stepInput(field: keyof Inputs, delta: number) {
+    const rateFields: (keyof Inputs)[] = ["mortgageRate", "investRate", "commissionRate"];
+    const current = parseFloat((inputs[field] ?? "").replace(/,/g, "")) || 0;
+    const next = Math.max(0, current + delta);
+    const formatted = rateFields.includes(field)
+      ? parseFloat(next.toFixed(4)).toString()
+      : Math.round(next).toString();
+    const nextInputs = { ...inputs, [field]: formatted };
+    setInputs(nextInputs);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextInputs));
   }
 
   const salary        = parseFloat(inputs.salary.replace(/,/g, "")) || 0;
@@ -553,6 +754,26 @@ export function HomeAffordability() {
   const afterPurchaseExpenses = monthlyExpenses - existingMortgageAmount;
 
   const canCalc = salary > 0 && housePrice > 0 && mortgageRate > 0 && targetMonthly > 0;
+
+  function applyGoalSeek() {
+    if (!goalSeekField || goalSeekResult == null) return;
+    const rounded = goalSeekField === 'investRate'
+      ? goalSeekResult.toFixed(2)
+      : Math.round(goalSeekResult).toString();
+    const next = { ...inputs, [goalSeekField]: rounded };
+    setInputs(next);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+
+  const goalSeekResult = useMemo(() => {
+    const gm = parseInt(goalMonths);
+    if (!goalSeekField || !gm || gm <= 0 || gm > 360) return undefined;
+    // All fields except the one being solved must be valid
+    const others = { salary, housePrice, mortgageRate, startingSavings, targetMonthly, investRate };
+    const required = (Object.keys(others) as (keyof typeof others)[]).filter(k => k !== goalSeekField);
+    if (required.some(k => others[k] <= 0)) return undefined;
+    return goalSeekCalc(gm, goalSeekField, salary, housePrice, mortgageRate, startingSavings, saleProceeds, monthlyExpenses, targetMonthly, investRate);
+  }, [goalMonths, goalSeekField, salary, housePrice, mortgageRate, startingSavings, saleProceeds, monthlyExpenses, targetMonthly, investRate]);
 
   const result = canCalc
     ? calcAffordability(salary, housePrice, mortgageRate, startingSavings, saleProceeds, monthlyExpenses, targetMonthly, investRate)
@@ -592,31 +813,19 @@ export function HomeAffordability() {
           <div className="ldg-form-row" style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", alignItems: "flex-end", marginBottom: "1rem" }}>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">Annual Salary</label>
-              <div className="ldg-input-rel">
-                <span className="ldg-input-prefix">$</span>
-                <input className="ldg-input ldg-input-money" placeholder="120,000" value={inputs.salary} onChange={set("salary")} />
-              </div>
+              <StepInput value={inputs.salary} onChange={set("salary")} onStep={d => stepInput("salary", d * 1000)} prefix="$" placeholder="120,000" />
             </div>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">House Price</label>
-              <div className="ldg-input-rel">
-                <span className="ldg-input-prefix">$</span>
-                <input className="ldg-input ldg-input-money" placeholder="500,000" value={inputs.housePrice} onChange={set("housePrice")} />
-              </div>
+              <StepInput value={inputs.housePrice} onChange={set("housePrice")} onStep={d => stepInput("housePrice", d * 5000)} prefix="$" placeholder="500,000" />
             </div>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">Mortgage Rate</label>
-              <div className="ldg-input-rel">
-                <input className="ldg-input ldg-input-pct" placeholder="6.75" value={inputs.mortgageRate} onChange={set("mortgageRate")} />
-                <span className="ldg-input-suffix">%</span>
-              </div>
+              <StepInput value={inputs.mortgageRate} onChange={set("mortgageRate")} onStep={d => stepInput("mortgageRate", d * 0.125)} suffix="%" placeholder="6.75" width={108} />
             </div>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">Starting Savings</label>
-              <div className="ldg-input-rel">
-                <span className="ldg-input-prefix">$</span>
-                <input className="ldg-input ldg-input-money" placeholder="0" value={inputs.startingSavings} onChange={set("startingSavings")} />
-              </div>
+              <StepInput value={inputs.startingSavings} onChange={set("startingSavings")} onStep={d => stepInput("startingSavings", d * 1000)} prefix="$" placeholder="0" />
             </div>
           </div>
 
@@ -624,17 +833,11 @@ export function HomeAffordability() {
           <div className="ldg-form-row" style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", alignItems: "flex-end", marginBottom: "1.5rem" }}>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">Target Monthly (PITI)</label>
-              <div className="ldg-input-rel">
-                <span className="ldg-input-prefix">$</span>
-                <input className="ldg-input ldg-input-money" style={{ width: 150 }} placeholder="2,500" value={inputs.targetMonthly ?? ""} onChange={set("targetMonthly")} />
-              </div>
+              <StepInput value={inputs.targetMonthly ?? ""} onChange={set("targetMonthly")} onStep={d => stepInput("targetMonthly", d * 50)} prefix="$" placeholder="2,500" />
             </div>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">Investment Return</label>
-              <div className="ldg-input-rel">
-                <input className="ldg-input ldg-input-pct" style={{ width: 110 }} placeholder="7" value={inputs.investRate} onChange={set("investRate")} />
-                <span className="ldg-input-suffix">%</span>
-              </div>
+              <StepInput value={inputs.investRate} onChange={set("investRate")} onStep={d => stepInput("investRate", d * 0.5)} suffix="%" placeholder="7" width={108} />
             </div>
             <div className="ldg-input-wrap">
               <label className="ldg-field-label">
@@ -643,58 +846,65 @@ export function HomeAffordability() {
                   <span style={{ marginLeft: "0.4rem", color: "var(--gold)", fontStyle: "normal" }}>← from Budget tab</span>
                 )}
               </label>
-              <div className="ldg-input-rel">
-                <span className="ldg-input-prefix">$</span>
-                <input
-                  className="ldg-input ldg-input-money"
-                  style={{ width: 160 }}
-                  placeholder={budgetTotal > 0 ? fmt(budgetTotal) : "3,000"}
-                  value={inputs.expensesOverride}
-                  onChange={set("expensesOverride")}
-                />
-              </div>
+              <StepInput value={inputs.expensesOverride} onChange={set("expensesOverride")} onStep={d => stepInput("expensesOverride", d * 100)} prefix="$" placeholder={budgetTotal > 0 ? fmt(budgetTotal) : "3,000"} width={158} />
             </div>
           </div>
 
           {/* Current home sale */}
           <div style={{ marginBottom: "1.5rem" }}>
-            <p className="ldg-mono" style={{ fontSize: "0.62rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--gold)", marginBottom: "0.85rem" }}>
-              Current Home Sale <span style={{ color: "var(--muted)" }}>· optional</span>
-            </p>
-            <div className="ldg-form-row" style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-              <div className="ldg-input-wrap">
-                <label className="ldg-field-label">Sale Price</label>
-                <div className="ldg-input-rel">
-                  <span className="ldg-input-prefix">$</span>
-                  <input className="ldg-input ldg-input-money" placeholder="350,000" value={inputs.currentHomeSalePrice ?? ""} onChange={set("currentHomeSalePrice")} />
-                </div>
-              </div>
-              <div className="ldg-input-wrap">
-                <label className="ldg-field-label">Remaining Mortgage</label>
-                <div className="ldg-input-rel">
-                  <span className="ldg-input-prefix">$</span>
-                  <input className="ldg-input ldg-input-money" placeholder="200,000" value={inputs.currentHomeMortgageBalance ?? ""} onChange={set("currentHomeMortgageBalance")} />
-                </div>
-              </div>
-              <div className="ldg-input-wrap">
-                <label className="ldg-field-label">Realtor Commission</label>
-                <div className="ldg-input-rel">
-                  <input className="ldg-input ldg-input-pct" style={{ width: 110 }} placeholder="6" value={inputs.commissionRate ?? ""} onChange={set("commissionRate")} />
-                  <span className="ldg-input-suffix">%</span>
-                </div>
-              </div>
-              {saleProceeds > 0 && (
-                <div style={{ alignSelf: "flex-end", paddingBottom: "0.7rem" }}>
-                  <p style={{ fontSize: "0.62rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)", marginBottom: "0.2rem" }}>Net Proceeds</p>
-                  <p className="ldg-mono" style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--green)" }}>{fmt(saleProceeds)}</p>
-                </div>
+            <button
+              onClick={() => {
+                const next = !homeSaleOpen;
+                setHomeSaleOpen(next);
+                try { localStorage.setItem("homeSaleOpen", String(next)); } catch {}
+              }}
+              style={{
+                display: "flex", alignItems: "center", gap: "0.5rem", background: "none",
+                border: "none", cursor: "pointer", padding: "0 0 0.85rem", width: "100%", textAlign: "left",
+              }}
+            >
+              <span className="ldg-mono" style={{ fontSize: "0.62rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--gold)" }}>
+                Current Home Sale
+              </span>
+              <span style={{ color: "var(--muted)", fontSize: "0.62rem", fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.1em" }}>· optional</span>
+              {saleProceeds > 0 && !homeSaleOpen && (
+                <span className="ldg-mono" style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--green)", fontWeight: 600 }}>
+                  +{fmt(saleProceeds)}
+                </span>
               )}
-            </div>
-            {saleProceeds > 0 && (
-              <div className="ldg-budget-notice" style={{ marginTop: "0.75rem" }}>
-                <span style={{ color: "var(--green)" }}>●</span>
-                {fmt(currentHomeSalePrice)} sale − {commissionRate}% commission − {fmt(currentHomeMortgageBalance)} mortgage = {fmt(saleProceeds)} added to your starting balance ({fmt(effectiveStartingSavings)} total)
-              </div>
+              <span style={{ marginLeft: saleProceeds > 0 && !homeSaleOpen ? "0.4rem" : "auto", color: "var(--muted)", fontSize: "0.7rem" }}>
+                {homeSaleOpen ? "▲" : "▼"}
+              </span>
+            </button>
+            {homeSaleOpen && (
+              <>
+                <div className="ldg-form-row" style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div className="ldg-input-wrap">
+                    <label className="ldg-field-label">Sale Price</label>
+                    <StepInput value={inputs.currentHomeSalePrice ?? ""} onChange={set("currentHomeSalePrice")} onStep={d => stepInput("currentHomeSalePrice", d * 5000)} prefix="$" placeholder="350,000" />
+                  </div>
+                  <div className="ldg-input-wrap">
+                    <label className="ldg-field-label">Remaining Mortgage</label>
+                    <StepInput value={inputs.currentHomeMortgageBalance ?? ""} onChange={set("currentHomeMortgageBalance")} onStep={d => stepInput("currentHomeMortgageBalance", d * 5000)} prefix="$" placeholder="200,000" />
+                  </div>
+                  <div className="ldg-input-wrap">
+                    <label className="ldg-field-label">Realtor Commission</label>
+                    <StepInput value={inputs.commissionRate ?? ""} onChange={set("commissionRate")} onStep={d => stepInput("commissionRate", d * 0.25)} suffix="%" placeholder="6" width={108} />
+                  </div>
+                  {saleProceeds > 0 && (
+                    <div style={{ alignSelf: "flex-end", paddingBottom: "0.7rem" }}>
+                      <p style={{ fontSize: "0.62rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)", marginBottom: "0.2rem" }}>Net Proceeds</p>
+                      <p className="ldg-mono" style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--green)" }}>{fmt(saleProceeds)}</p>
+                    </div>
+                  )}
+                </div>
+                {saleProceeds > 0 && (
+                  <div className="ldg-budget-notice" style={{ marginTop: "0.75rem" }}>
+                    <span style={{ color: "var(--green)" }}>●</span>
+                    {fmt(currentHomeSalePrice)} sale − {commissionRate}% commission − {fmt(currentHomeMortgageBalance)} mortgage = {fmt(saleProceeds)} added to your starting balance ({fmt(effectiveStartingSavings)} total)
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -767,6 +977,68 @@ export function HomeAffordability() {
                     )}
                   </>
                 )}
+
+                {/* ── Embedded Goal Seek ── */}
+                <div className="ldg-gs-embed">
+                  <p className="ldg-gs-label">Goal Seek</p>
+                  <div className="ldg-gs-sentence">
+                    <span>Reach in</span>
+                    <input
+                      className="ldg-gs-inline-input"
+                      placeholder="24"
+                      value={goalMonths}
+                      onChange={e => setGoalMonths(e.target.value)}
+                    />
+                    <span>months by adjusting</span>
+                    <select
+                      className="ldg-gs-inline-select"
+                      value={goalSeekField}
+                      onChange={e => setGoalSeekField(e.target.value as GoalSeekField | "")}
+                    >
+                      <option value="">— field —</option>
+                      <option value="salary">Annual Salary</option>
+                      <option value="housePrice">House Price</option>
+                      <option value="startingSavings">Starting Savings</option>
+                      <option value="targetMonthly">Target Monthly</option>
+                      <option value="investRate">Investment Return</option>
+                    </select>
+                  </div>
+
+                  {goalSeekField && parseInt(goalMonths) > 0 && goalSeekResult === undefined && (
+                    <p className="ldg-gs-status">Fill in all other fields above to calculate.</p>
+                  )}
+                  {goalSeekField && parseInt(goalMonths) > 0 && goalSeekResult === null && (
+                    <p className="ldg-gs-status" style={{ color: "var(--red)" }}>No solution found for this goal.</p>
+                  )}
+                  {goalSeekField && goalSeekResult != null && (
+                    <div className="ldg-gs-answer">
+                      <p className="ldg-gs-answer-label">
+                        {goalSeekField === 'housePrice' ? 'Max House Price' : GOAL_SEEK_LABELS[goalSeekField as GoalSeekField]}
+                      </p>
+                      <div className="ldg-gs-answer-value">
+                        {goalSeekField === 'investRate'
+                          ? `${goalSeekResult.toFixed(2)}%`
+                          : fmt(Math.round(goalSeekResult))}
+                      </div>
+                      {(() => {
+                        const cv =
+                          goalSeekField === 'salary' ? salary :
+                          goalSeekField === 'housePrice' ? housePrice :
+                          goalSeekField === 'startingSavings' ? startingSavings :
+                          goalSeekField === 'targetMonthly' ? targetMonthly : investRate;
+                        if (!cv) return null;
+                        const diff = goalSeekResult - cv;
+                        const pct = Math.abs(diff / cv * 100).toFixed(1);
+                        const sign = diff >= 0 ? '+' : '−';
+                        const diffFmt = goalSeekField === 'investRate'
+                          ? `${sign}${Math.abs(diff).toFixed(2)}%`
+                          : `${sign}${fmt(Math.abs(Math.round(diff)))}`;
+                        return <p className="ldg-gs-answer-delta">{diffFmt} ({pct}%) from current</p>;
+                      })()}
+                      <button className="ldg-gs-apply" onClick={applyGoalSeek}>apply ↗</button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Stats: cash needed */}
