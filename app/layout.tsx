@@ -36,12 +36,15 @@ const figtree = Figtree({
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
 };
 
 export const metadata: Metadata = {
   title: "Budget",
   description: "Personal finance tools",
+  manifest: "/manifest.json",
   icons: {
     icon: [
       { url: "/favicon.ico" },
