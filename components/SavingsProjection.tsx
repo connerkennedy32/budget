@@ -9,6 +9,7 @@ interface Inputs {
   contribution: string;
   startingBalance: string;
   annualRate: string;
+  years: string;
 }
 
 interface MonthRow {
@@ -280,6 +281,7 @@ export function SavingsProjection() {
     contribution: "",
     startingBalance: "0",
     annualRate: "7.00",
+    years: "10",
   });
 
   useEffect(() => {
@@ -300,12 +302,14 @@ export function SavingsProjection() {
   const contribution = parseFloat(inputs.contribution.replace(/,/g, "")) || 0;
   const startingBalance = parseFloat(inputs.startingBalance.replace(/,/g, "")) || 0;
   const annualRate = parseFloat(inputs.annualRate) || 0;
+  const years = Math.max(1, Math.min(100, parseInt(inputs.years) || 10));
+  const totalMonths = years * 12;
 
   const hasValidInputs = contribution > 0 || startingBalance > 0;
 
-  const rows = hasValidInputs ? buildProjection(contribution, startingBalance, annualRate, 120) : [];
+  const rows = hasValidInputs ? buildProjection(contribution, startingBalance, annualRate, totalMonths) : [];
 
-  const milestoneSet = new Set(MILESTONES);
+  const milestoneSet = new Set([...MILESTONES, totalMonths]);
 
   function atMonth(m: number) {
     return rows[m - 1];
@@ -356,6 +360,13 @@ export function SavingsProjection() {
                 <span className="ldg-input-suffix">%</span>
               </div>
             </div>
+            <div className="ldg-input-wrap">
+              <label className="ldg-field-label">Projection Years</label>
+              <div style={{ position: "relative" }}>
+                <input className="ldg-input ldg-input-pct" placeholder="10" value={inputs.years} onChange={set("years")} style={{ width: 120 }} />
+                <span className="ldg-input-suffix">yr</span>
+              </div>
+            </div>
           </div>
 
           {hasValidInputs && rows.length > 0 && (
@@ -382,7 +393,14 @@ export function SavingsProjection() {
                 {/* Long-term milestones */}
                 <div className="ldg-card">
                   <p className="ldg-card-title">Long-Term Growth</p>
-                  {[36, 60, 120].map((m) => {
+                  {(() => {
+                    const pts = Array.from(new Set([
+                      Math.round(totalMonths * 0.25 / 12) * 12,
+                      Math.round(totalMonths * 0.5 / 12) * 12,
+                      totalMonths,
+                    ])).filter((m, i, arr) => m > 0 && (i === 0 || m !== arr[i - 1]));
+                    return pts;
+                  })().map((m) => {
                     const row = atMonth(m);
                     if (!row) return null;
                     const gainPct = row.totalContributed > 0
@@ -415,6 +433,7 @@ export function SavingsProjection() {
                     { label: "Annual return", value: `${annualRate.toFixed(2)}%` },
                     { label: "Compounding", value: "Monthly" },
                     { label: "Contributions", value: "End of month" },
+                    { label: "Projection", value: `${years} ${years === 1 ? "year" : "years"}` },
                   ].map(({ label, value }) => (
                     <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.4rem 0", borderTop: "1px solid var(--border)" }}>
                       <span style={{ fontSize: "0.82rem", color: "var(--muted)" }}>{label}</span>
@@ -428,7 +447,7 @@ export function SavingsProjection() {
               {/* Month-by-month table */}
               <div className="ldg-appear ldg-d3">
                 <p className="ldg-mono" style={{ fontSize: "0.62rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--gold)", marginBottom: "0.75rem" }}>
-                  Month-by-Month · 10 Years
+                  Month-by-Month · {years} {years === 1 ? "Year" : "Years"}
                 </p>
                 <div className="ldg-tbl-wrap">
                   <table className="ldg-tbl">
