@@ -15,18 +15,45 @@ function calcPI(principal: number, annualRate: number): number {
   return (principal * monthlyRate * factor) / (factor - 1);
 }
 
-function buildTable(price: number, firstDown: number, firstRate: number) {
-  const taxes = (price * 0.55 * 0.008736) / 12;
-  const insurance = (price * 0.004007) / 12;
-  const fixed = taxes + insurance;
-  const closingCosts = price * 0.025;
+type Overrides = {
+  taxes: number | null;
+  insurance: number | null;
+  closingCosts: number | null;
+};
 
-  // Each row represents total cash to close (down payment + closing costs).
-  // The actual down payment = cashToClose - closingCosts; loan = price - actualDown.
+const NO_OVERRIDES: Overrides = { taxes: null, insurance: null, closingCosts: null };
+
+function defaultTaxes(price: number) {
+  return (price * 0.55 * 0.008736) / 12;
+}
+function defaultInsurance(price: number) {
+  return (price * 0.004007) / 12;
+}
+function defaultClosingCosts(price: number) {
+  return price * 0.025;
+}
+
+function buildTable(
+  price: number,
+  firstDown: number,
+  firstRate: number,
+  overrides: Overrides = NO_OVERRIDES
+) {
+  const taxes = overrides.taxes ?? defaultTaxes(price);
+  const insurance = overrides.insurance ?? defaultInsurance(price);
+  const fixed = taxes + insurance;
+  const closingCosts = overrides.closingCosts ?? defaultClosingCosts(price);
+
+  // Each row is total cash to close. Closing costs come out first; the remainder
+  // is the actual down payment: down = cashToClose - closingCosts; loan = price - down.
+  // The row set is anchored to firstDown alone so editing closing costs never
+  // shifts or drops rows. If cash to close is less than closing costs, the
+  // shortfall rolls into the loan (loan > price), so every row still responds
+  // to a change in closing costs — there are no dead, unchanging rows.
   const cashAmounts = Array.from(
     { length: DOWN_PAYMENT_ROWS },
     (_, i) => firstDown + i * DOWN_PAYMENT_STEP
-  ).filter((cash) => cash - closingCosts >= 0 && cash < price + closingCosts);
+  );
 
   const rates = Array.from({ length: RATE_COLS }, (_, i) =>
     Math.round((firstRate + i * RATE_STEP) * 10000) / 10000
@@ -36,8 +63,10 @@ function buildTable(price: number, firstDown: number, firstRate: number) {
   let max = -Infinity;
   const grid = cashAmounts.map((cash) =>
     rates.map((rate) => {
-      const actualDown = cash - closingCosts;
-      const val = calcPI(price - actualDown, rate) + fixed;
+      // Cap the down payment at the price (loan can't go below zero); a negative
+      // down payment means closing costs are financed into the loan.
+      const down = Math.min(cash - closingCosts, price);
+      const val = calcPI(price - down, rate) + fixed;
       if (val < min) min = val;
       if (val > max) max = val;
       return val;
@@ -174,6 +203,61 @@ const CSS = `
   }
   .ldg-inline-trigger:hover { opacity: 0.8; }
 
+  .ldg-adjust-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 1.25rem 0 1.5rem;
+  }
+  .ldg-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .ldg-field-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: 'Figtree', sans-serif;
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .ldg-field-badge {
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    color: var(--gold);
+    background: var(--gold-soft);
+    border: 1px solid var(--gold-border);
+    padding: 0.05rem 0.35rem;
+    border-radius: 999px;
+  }
+  .ldg-field-input-wrap { position: relative; }
+  .ldg-field-prefix {
+    position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%);
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted); font-size: 0.9rem; pointer-events: none;
+  }
+  .ldg-field-input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum';
+    font-size: 0.95rem;
+    padding: 0.55rem 0.75rem 0.55rem 1.6rem;
+    border-radius: 3px;
+    outline: none;
+    width: 150px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .ldg-field-input:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(200,149,42,0.1);
+  }
+
   .ldg-tbl-wrap {
     flex: 1;
     min-height: 0;
@@ -237,6 +321,8 @@ const CSS = `
     .ldg-input-wrap { width: 100%; }
     .ldg-input { width: 100% !important; }
     .ldg-btn { width: 100%; }
+    .ldg-field { flex: 1 1 45%; }
+    .ldg-field-input { width: 100% !important; }
   }
 `;
 
@@ -293,6 +379,52 @@ function InlineEdit({
   );
 }
 
+function NumField({
+  label,
+  value,
+  isCustom,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  isCustom: boolean;
+  onCommit: (val: string) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  // Keep the field in sync when the underlying value changes (e.g. new table).
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  function commit() {
+    if (draft.trim() === "" || parseFloat(draft) === value) return;
+    onCommit(draft);
+  }
+
+  return (
+    <label className="ldg-field">
+      <span className="ldg-field-label">
+        {label}
+        {isCustom && <span className="ldg-field-badge">custom</span>}
+      </span>
+      <span className="ldg-field-input-wrap">
+        <span className="ldg-field-prefix">$</span>
+        <input
+          className="ldg-field-input"
+          inputMode="decimal"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
 export function MortgageCalculator() {
   const [homePrice, setHomePrice] = useState("");
   const [startDown, setStartDown] = useState("0");
@@ -301,6 +433,7 @@ export function MortgageCalculator() {
   const [tableData, setTableData] = useState<TableData | null>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [selectedCol, setSelectedCol] = useState<number | null>(null);
+  const [overrides, setOverrides] = useState<Overrides>(NO_OVERRIDES);
 
   const toggleRow = makeToggle(setSelectedRow);
   const toggleCol = makeToggle(setSelectedCol);
@@ -309,16 +442,24 @@ export function MortgageCalculator() {
     const price = localStorage.getItem("homePrice") ?? "";
     const down = localStorage.getItem("startDown") ?? "0";
     const rate = localStorage.getItem("startRate") ?? "5.75";
+    let ov = NO_OVERRIDES;
+    try {
+      const stored = localStorage.getItem("overrides");
+      if (stored) ov = { ...NO_OVERRIDES, ...JSON.parse(stored) };
+    } catch {
+      /* ignore malformed stored overrides */
+    }
     setHomePrice(price);
     setStartDown(down);
     setStartRate(rate);
+    setOverrides(ov);
     const p = parseFloat(price);
     const d = parseFloat(down);
     const r = parseFloat(rate);
-    if (p > 0 && d >= 0 && r > 0) setTableData(buildTable(p, d, r));
+    if (p > 0 && d >= 0 && r > 0) setTableData(buildTable(p, d, r, ov));
   }, []);
 
-  function calculate(down = startDown, rate = startRate) {
+  function calculate(down = startDown, rate = startRate, ov = overrides) {
     setError("");
     const price = parseFloat(homePrice.replace(/,/g, ""));
     const firstDown = parseFloat(down.replace(/,/g, ""));
@@ -334,7 +475,18 @@ export function MortgageCalculator() {
     localStorage.setItem("homePrice", homePrice);
     localStorage.setItem("startDown", down);
     localStorage.setItem("startRate", rate);
-    setTableData(buildTable(price, firstDown, firstRate));
+    localStorage.setItem("overrides", JSON.stringify(ov));
+    setTableData(buildTable(price, firstDown, firstRate, ov));
+  }
+
+  function commitOverride(key: keyof Overrides, raw: string) {
+    const parsed = parseFloat(raw.replace(/[^0-9.]/g, ""));
+    const next: Overrides = {
+      ...overrides,
+      [key]: isNaN(parsed) ? null : parsed,
+    };
+    setOverrides(next);
+    calculate(startDown, startRate, next);
   }
 
   return (
@@ -362,10 +514,10 @@ export function MortgageCalculator() {
                 placeholder="400,000"
                 value={homePrice}
                 onChange={(e) => setHomePrice(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && calculate()}
+                onKeyDown={(e) => { if (e.key === "Enter") { setOverrides(NO_OVERRIDES); calculate(startDown, startRate, NO_OVERRIDES); } }}
               />
             </div>
-            <button className="ldg-btn" onClick={() => calculate()}>Generate Table</button>
+            <button className="ldg-btn" onClick={() => { setOverrides(NO_OVERRIDES); calculate(startDown, startRate, NO_OVERRIDES); }}>Generate Table</button>
             {error && <span style={{ fontSize: "0.8rem", color: "var(--red)" }}>{error}</span>}
           </div>
 
@@ -378,10 +530,33 @@ export function MortgageCalculator() {
                   Monthly Payment — {LOAN_TERM}-year fixed · {formatShort(tableData.price)} home price
                 </p>
                 <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                  Each cell includes P&amp;I + property taxes ({formatShort(tableData.taxes)}/mo) + homeowner&apos;s insurance ({formatShort(tableData.insurance)}/mo).
-                  Row labels show total cash to close — closing costs ({formatShort(tableData.closingCosts)}) are subtracted first, the remainder is your down payment.
+                  Each cell includes P&amp;I + property taxes + homeowner&apos;s insurance.
+                  Row labels show total cash to close — closing costs ({formatShort(tableData.closingCosts)}) come
+                  out first, and the remainder is your down payment (loan = price − down payment).
                   Click a column or row header to highlight. Click a cell to select intersection.
                 </p>
+
+                {/* Adjustable assumptions */}
+                <div className="ldg-adjust-row">
+                  <NumField
+                    label="Property Tax /mo"
+                    value={Math.round(tableData.taxes)}
+                    isCustom={overrides.taxes !== null}
+                    onCommit={(val) => commitOverride("taxes", val)}
+                  />
+                  <NumField
+                    label="Insurance /mo"
+                    value={Math.round(tableData.insurance)}
+                    isCustom={overrides.insurance !== null}
+                    onCommit={(val) => commitOverride("insurance", val)}
+                  />
+                  <NumField
+                    label="Closing Costs"
+                    value={Math.round(tableData.closingCosts)}
+                    isCustom={overrides.closingCosts !== null}
+                    onCommit={(val) => commitOverride("closingCosts", val)}
+                  />
+                </div>
               </div>
 
               <div className="ldg-tbl-wrap">
