@@ -102,6 +102,17 @@ function makeToggle(set: (fn: (prev: number | null) => number | null) => void) {
 
 type TableData = ReturnType<typeof buildTable>;
 
+type SavedScenario = {
+  id: string;
+  price: number;
+  down: number;
+  rate: number;
+  payment: number;
+  taxes: number;
+  insurance: number;
+  closingCosts: number;
+};
+
 const CSS = `
   .ldg {
     --gold: #C8952A;
@@ -315,6 +326,67 @@ const CSS = `
   .ldg-tbl-sel-col { background: var(--gold-soft) !important; color: var(--gold) !important; }
   .ldg-tbl-sel-row td:first-child { background: var(--gold-soft) !important; color: var(--gold) !important; }
 
+  .ldg-save-btn {
+    background: transparent;
+    color: var(--gold);
+    font-family: 'Figtree', sans-serif;
+    font-weight: 700;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--gold-border);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .ldg-save-btn:hover { background: var(--gold-soft); }
+
+  .ldg-scenarios {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  .ldg-scenario-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--gold-border);
+    border-radius: 4px;
+    padding: 0.7rem 1.9rem 0.7rem 0.9rem;
+    min-width: 150px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .ldg-scenario-card:hover { background: var(--gold-soft); }
+  .ldg-scenario-remove {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.5rem;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+  .ldg-scenario-remove:hover { color: var(--red); }
+  .ldg-scenario-payment {
+    font-family: 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum';
+    font-size: 1.05rem;
+    color: var(--gold);
+    font-weight: 700;
+  }
+  .ldg-scenario-detail {
+    font-family: 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum';
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 0.2rem;
+  }
+
   @media (max-width: 640px) {
     .ldg-inner { padding: 1.25rem 1rem 3rem !important; }
     .ldg-mortgage-row { flex-direction: column !important; align-items: stretch !important; }
@@ -434,6 +506,7 @@ export function MortgageCalculator() {
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [selectedCol, setSelectedCol] = useState<number | null>(null);
   const [overrides, setOverrides] = useState<Overrides>(NO_OVERRIDES);
+  const [scenarios, setScenarios] = useState<SavedScenario[]>([]);
 
   const toggleRow = makeToggle(setSelectedRow);
   const toggleCol = makeToggle(setSelectedCol);
@@ -453,6 +526,12 @@ export function MortgageCalculator() {
     setStartDown(down);
     setStartRate(rate);
     setOverrides(ov);
+    try {
+      const storedScenarios = localStorage.getItem("mortgageScenarios");
+      if (storedScenarios) setScenarios(JSON.parse(storedScenarios));
+    } catch {
+      /* ignore malformed stored scenarios */
+    }
     const p = parseFloat(price);
     const d = parseFloat(down);
     const r = parseFloat(rate);
@@ -489,6 +568,53 @@ export function MortgageCalculator() {
     calculate(startDown, startRate, next);
   }
 
+  function persistScenarios(next: SavedScenario[]) {
+    setScenarios(next);
+    localStorage.setItem("mortgageScenarios", JSON.stringify(next));
+  }
+
+  function saveScenario() {
+    if (!tableData || selectedRow === null || selectedCol === null) return;
+    const cash = tableData.cashAmounts[selectedRow];
+    const down = Math.min(cash - tableData.closingCosts, tableData.price);
+    const rate = tableData.rates[selectedCol];
+    const payment = tableData.grid[selectedRow][selectedCol];
+    const scenario: SavedScenario = {
+      id: `${tableData.price}-${down}-${rate}-${Date.now()}`,
+      price: tableData.price,
+      down,
+      rate,
+      payment,
+      taxes: tableData.taxes,
+      insurance: tableData.insurance,
+      closingCosts: tableData.closingCosts,
+    };
+    persistScenarios([...scenarios, scenario]);
+  }
+
+  function removeScenario(id: string) {
+    persistScenarios(scenarios.filter((s) => s.id !== id));
+  }
+
+  function loadScenario(s: SavedScenario) {
+    setError("");
+    const priceStr = String(s.price);
+    const downStr = String(s.down);
+    const rateStr = String(s.rate);
+    const ov: Overrides = { taxes: s.taxes, insurance: s.insurance, closingCosts: s.closingCosts };
+    setHomePrice(priceStr);
+    setStartDown(downStr);
+    setStartRate(rateStr);
+    setOverrides(ov);
+    setSelectedRow(0);
+    setSelectedCol(0);
+    localStorage.setItem("homePrice", priceStr);
+    localStorage.setItem("startDown", downStr);
+    localStorage.setItem("startRate", rateStr);
+    localStorage.setItem("overrides", JSON.stringify(ov));
+    setTableData(buildTable(s.price, s.down, s.rate, ov));
+  }
+
   return (
     <>
       <style>{CSS}</style>
@@ -504,6 +630,34 @@ export function MortgageCalculator() {
               Mortgage Rate Explorer
             </h1>
           </div>
+
+          {/* Saved scenarios */}
+          {scenarios.length > 0 && (
+            <div className="ldg-scenarios">
+              {scenarios.map((s) => (
+                <div
+                  key={s.id}
+                  className="ldg-scenario-card"
+                  onClick={() => loadScenario(s)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === "Enter") loadScenario(s); }}
+                >
+                  <button
+                    className="ldg-scenario-remove"
+                    onClick={(e) => { e.stopPropagation(); removeScenario(s.id); }}
+                    aria-label="Remove scenario"
+                  >
+                    ×
+                  </button>
+                  <div className="ldg-scenario-payment">{formatShort(s.payment)}/mo</div>
+                  <div className="ldg-scenario-detail">
+                    {formatShort(s.price)} home · {formatShort(s.down)} down · {s.rate.toFixed(2)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Input row */}
           <div className="ldg-mortgage-row" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginBottom: tableData ? "2rem" : 0 }}>
@@ -535,6 +689,12 @@ export function MortgageCalculator() {
                   out first, and the remainder is your down payment (loan = price − down payment).
                   Click a column or row header to highlight. Click a cell to select intersection.
                 </p>
+
+                {selectedRow !== null && selectedCol !== null && (
+                  <button className="ldg-save-btn" style={{ marginTop: "0.75rem" }} onClick={saveScenario}>
+                    Save This Scenario
+                  </button>
+                )}
 
                 {/* Adjustable assumptions */}
                 <div className="ldg-adjust-row">
