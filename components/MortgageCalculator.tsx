@@ -33,6 +33,12 @@ function defaultClosingCosts(price: number) {
   return price * 0.025;
 }
 
+// "0" is the untouched sentinel for startDown; when it hasn't been customized,
+// anchor the first row to 20% down plus closing costs instead of $0 down.
+function defaultFirstDown(price: number, closingCosts: number) {
+  return price * 0.2 + closingCosts;
+}
+
 function buildTable(
   price: number,
   firstDown: number,
@@ -507,6 +513,10 @@ export function MortgageCalculator() {
   const [selectedCol, setSelectedCol] = useState<number | null>(null);
   const [overrides, setOverrides] = useState<Overrides>(NO_OVERRIDES);
   const [scenarios, setScenarios] = useState<SavedScenario[]>([]);
+  // True until the user manually edits the first row's cash-to-close value.
+  // While true, the first row tracks 20% down + closing costs, so it updates
+  // automatically when closing costs (or price) change.
+  const [downAuto, setDownAuto] = useState(true);
 
   const toggleRow = makeToggle(setSelectedRow);
   const toggleCol = makeToggle(setSelectedCol);
@@ -515,6 +525,10 @@ export function MortgageCalculator() {
     const price = localStorage.getItem("homePrice") ?? "";
     const down = localStorage.getItem("startDown") ?? "0";
     const rate = localStorage.getItem("startRate") ?? "5.75";
+    const storedAuto = localStorage.getItem("startDownAuto");
+    // Fall back to treating "0" (the old sentinel) as auto for anyone with
+    // pre-existing storage from before this flag existed.
+    const auto = storedAuto !== null ? storedAuto === "true" : down === "0";
     let ov = NO_OVERRIDES;
     try {
       const stored = localStorage.getItem("overrides");
@@ -523,9 +537,9 @@ export function MortgageCalculator() {
       /* ignore malformed stored overrides */
     }
     setHomePrice(price);
-    setStartDown(down);
     setStartRate(rate);
     setOverrides(ov);
+    setDownAuto(auto);
     try {
       const storedScenarios = localStorage.getItem("mortgageScenarios");
       if (storedScenarios) setScenarios(JSON.parse(storedScenarios));
@@ -533,28 +547,37 @@ export function MortgageCalculator() {
       /* ignore malformed stored scenarios */
     }
     const p = parseFloat(price);
-    const d = parseFloat(down);
+    let d = parseFloat(down);
     const r = parseFloat(rate);
+    if (auto && p > 0) {
+      d = defaultFirstDown(p, ov.closingCosts ?? defaultClosingCosts(p));
+    }
+    setStartDown(String(d));
     if (p > 0 && d >= 0 && r > 0) setTableData(buildTable(p, d, r, ov));
   }, []);
 
-  function calculate(down = startDown, rate = startRate, ov = overrides) {
+  function calculate(down = startDown, rate = startRate, ov = overrides, auto = downAuto) {
     setError("");
     const price = parseFloat(homePrice.replace(/,/g, ""));
-    const firstDown = parseFloat(down.replace(/,/g, ""));
+    let firstDown = parseFloat(down.replace(/,/g, ""));
     const firstRate = parseFloat(rate);
 
     if (isNaN(price) || price <= 0) {
       setError("Please enter a valid home price.");
       return;
     }
+    if (auto) {
+      firstDown = defaultFirstDown(price, ov.closingCosts ?? defaultClosingCosts(price));
+    }
     if (isNaN(firstDown) || firstDown < 0) return;
     if (isNaN(firstRate) || firstRate <= 0 || firstRate > 30) return;
 
     localStorage.setItem("homePrice", homePrice);
-    localStorage.setItem("startDown", down);
+    localStorage.setItem("startDown", String(firstDown));
     localStorage.setItem("startRate", rate);
     localStorage.setItem("overrides", JSON.stringify(ov));
+    localStorage.setItem("startDownAuto", String(auto));
+    setStartDown(String(firstDown));
     setTableData(buildTable(price, firstDown, firstRate, ov));
   }
 
@@ -606,12 +629,14 @@ export function MortgageCalculator() {
     setStartDown(downStr);
     setStartRate(rateStr);
     setOverrides(ov);
+    setDownAuto(false);
     setSelectedRow(0);
     setSelectedCol(0);
     localStorage.setItem("homePrice", priceStr);
     localStorage.setItem("startDown", downStr);
     localStorage.setItem("startRate", rateStr);
     localStorage.setItem("overrides", JSON.stringify(ov));
+    localStorage.setItem("startDownAuto", "false");
     setTableData(buildTable(s.price, s.down, s.rate, ov));
   }
 
@@ -668,10 +693,10 @@ export function MortgageCalculator() {
                 placeholder="400,000"
                 value={homePrice}
                 onChange={(e) => setHomePrice(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { setOverrides(NO_OVERRIDES); calculate(startDown, startRate, NO_OVERRIDES); } }}
+                onKeyDown={(e) => { if (e.key === "Enter") { setOverrides(NO_OVERRIDES); setDownAuto(true); calculate(startDown, startRate, NO_OVERRIDES, true); } }}
               />
             </div>
-            <button className="ldg-btn" onClick={() => { setOverrides(NO_OVERRIDES); calculate(startDown, startRate, NO_OVERRIDES); }}>Generate Table</button>
+            <button className="ldg-btn" onClick={() => { setOverrides(NO_OVERRIDES); setDownAuto(true); calculate(startDown, startRate, NO_OVERRIDES, true); }}>Generate Table</button>
             {error && <span style={{ fontSize: "0.8rem", color: "var(--red)" }}>{error}</span>}
           </div>
 
@@ -771,7 +796,7 @@ export function MortgageCalculator() {
                             {rowIdx === 0 ? (
                               <InlineEdit
                                 value={startDown}
-                                onCommit={(val) => { setStartDown(val); calculate(val, startRate); }}
+                                onCommit={(val) => { setDownAuto(false); setStartDown(val); calculate(val, startRate, overrides, false); }}
                                 format={(v) => formatDown(parseFloat(v.replace(/,/g, "")))}
                                 width="5rem"
                               />
