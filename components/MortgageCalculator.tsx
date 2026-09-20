@@ -19,9 +19,10 @@ type Overrides = {
   taxes: number | null;
   insurance: number | null;
   closingCosts: number | null;
+  hoa: number | null;
 };
 
-const NO_OVERRIDES: Overrides = { taxes: null, insurance: null, closingCosts: null };
+const NO_OVERRIDES: Overrides = { taxes: null, insurance: null, closingCosts: null, hoa: null };
 
 function defaultTaxes(price: number) {
   return (price * 0.55 * 0.008736) / 12;
@@ -31,6 +32,9 @@ function defaultInsurance(price: number) {
 }
 function defaultClosingCosts(price: number) {
   return price * 0.025;
+}
+function defaultHoa() {
+  return 0;
 }
 
 // "0" is the untouched sentinel for startDown; when it hasn't been customized,
@@ -47,7 +51,8 @@ function buildTable(
 ) {
   const taxes = overrides.taxes ?? defaultTaxes(price);
   const insurance = overrides.insurance ?? defaultInsurance(price);
-  const fixed = taxes + insurance;
+  const hoa = overrides.hoa ?? defaultHoa();
+  const fixed = taxes + insurance + hoa;
   const closingCosts = overrides.closingCosts ?? defaultClosingCosts(price);
 
   // Each row is total cash to close. Closing costs come out first; the remainder
@@ -79,7 +84,7 @@ function buildTable(
     })
   );
 
-  return { price, taxes, insurance, closingCosts, cashAmounts, rates, grid, min, max };
+  return { price, taxes, insurance, hoa, closingCosts, cashAmounts, rates, grid, min, max };
 }
 
 function formatShort(value: number): string {
@@ -116,6 +121,7 @@ type SavedScenario = {
   payment: number;
   taxes: number;
   insurance: number;
+  hoa: number;
   closingCosts: number;
 };
 
@@ -610,6 +616,7 @@ export function MortgageCalculator() {
       payment,
       taxes: tableData.taxes,
       insurance: tableData.insurance,
+      hoa: tableData.hoa,
       closingCosts: tableData.closingCosts,
     };
     persistScenarios([...scenarios, scenario]);
@@ -624,7 +631,7 @@ export function MortgageCalculator() {
     const priceStr = String(s.price);
     const downStr = String(s.down);
     const rateStr = String(s.rate);
-    const ov: Overrides = { taxes: s.taxes, insurance: s.insurance, closingCosts: s.closingCosts };
+    const ov: Overrides = { taxes: s.taxes, insurance: s.insurance, closingCosts: s.closingCosts, hoa: s.hoa };
     setHomePrice(priceStr);
     setStartDown(downStr);
     setStartRate(rateStr);
@@ -709,7 +716,7 @@ export function MortgageCalculator() {
                   Monthly Payment — {LOAN_TERM}-year fixed · {formatShort(tableData.price)} home price
                 </p>
                 <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                  Each cell includes P&amp;I + property taxes + homeowner&apos;s insurance.
+                  Each cell includes P&amp;I + property taxes + homeowner&apos;s insurance + HOA.
                   Row labels show total cash to close — closing costs ({formatShort(tableData.closingCosts)}) come
                   out first, and the remainder is your down payment (loan = price − down payment).
                   Click a column or row header to highlight. Click a cell to select intersection.
@@ -740,6 +747,12 @@ export function MortgageCalculator() {
                     value={Math.round(tableData.closingCosts)}
                     isCustom={overrides.closingCosts !== null}
                     onCommit={(val) => commitOverride("closingCosts", val)}
+                  />
+                  <NumField
+                    label="HOA /mo"
+                    value={Math.round(tableData.hoa)}
+                    isCustom={overrides.hoa !== null}
+                    onCommit={(val) => commitOverride("hoa", val)}
                   />
                 </div>
               </div>
