@@ -3,6 +3,17 @@
 import { useState, useEffect } from "react";
 
 type FilingStatus = "mfj" | "single";
+type PayFrequency = "semimonthly" | "biweekly";
+
+const PAYCHECK_DIVISORS: Record<PayFrequency, number> = {
+  semimonthly: 24,
+  biweekly: 26,
+};
+
+const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = {
+  semimonthly: "Semi-Monthly",
+  biweekly: "Biweekly",
+};
 
 // 2026 federal income tax brackets (Rev. Proc. 2025-32)
 const BRACKETS_MFJ = [
@@ -75,8 +86,9 @@ interface TaxResult {
   brackets: { rate: number; amount: number; tax: number }[];
 }
 
-function calculate(grossAnnual: number, filing: FilingStatus): TaxResult {
+function calculate(grossAnnual: number, filing: FilingStatus, payFrequency: PayFrequency): TaxResult {
   const config = TAX_CONFIG[filing];
+  const paycheckDivisor = PAYCHECK_DIVISORS[payFrequency];
   const taxableIncome = Math.max(0, grossAnnual - config.standardDeduction);
   const federalTax = calcFederalTax(taxableIncome, config.brackets);
   const stateTax = grossAnnual * UT_STATE_RATE;
@@ -84,10 +96,10 @@ function calculate(grossAnnual: number, filing: FilingStatus): TaxResult {
   const totalTax = federalTax + stateTax + ss + medicare;
   const takeHome = grossAnnual - totalTax;
   const monthlyTakeHome = takeHome / 12;
-  const paycheckTakeHome = takeHome / 24;
+  const paycheckTakeHome = takeHome / paycheckDivisor;
   const tithing = grossAnnual * 0.10;
   const monthlyAfterTithing = (takeHome - tithing) / 12;
-  const paycheckAfterTithing = (takeHome - tithing) / 24;
+  const paycheckAfterTithing = (takeHome - tithing) / paycheckDivisor;
   const effectiveRate = (totalTax / grossAnnual) * 100;
 
   let prev = 0;
@@ -372,23 +384,33 @@ const CSS = `
 export function TakeHomeCalculator() {
   const [salary, setSalary] = useState("");
   const [filing, setFiling] = useState<FilingStatus>("mfj");
+  const [payFrequency, setPayFrequency] = useState<PayFrequency>("semimonthly");
+  const [breakdownView, setBreakdownView] = useState<"annual" | "perPaycheck">("annual");
   const [result, setResult] = useState<TaxResult | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     const savedFiling = localStorage.getItem("takeHomeFiling") as FilingStatus | null;
     if (savedFiling === "mfj" || savedFiling === "single") setFiling(savedFiling);
+    const savedFrequency = localStorage.getItem("takeHomePayFrequency") as PayFrequency | null;
+    if (savedFrequency === "semimonthly" || savedFrequency === "biweekly") setPayFrequency(savedFrequency);
     const saved = localStorage.getItem("takeHomeSalary");
     if (saved) {
       setSalary(saved);
       const val = parseFloat(saved.replace(/,/g, ""));
-      if (!isNaN(val) && val > 0) setResult(calculate(val, savedFiling === "single" ? "single" : "mfj"));
+      if (!isNaN(val) && val > 0) {
+        setResult(calculate(
+          val,
+          savedFiling === "single" ? "single" : "mfj",
+          savedFrequency === "biweekly" ? "biweekly" : "semimonthly"
+        ));
+      }
     }
   }, []);
 
-  function recalculate(sal: string, fil: FilingStatus) {
+  function recalculate(sal: string, fil: FilingStatus, freq: PayFrequency) {
     const val = parseFloat(sal.replace(/,/g, ""));
-    if (!isNaN(val) && val > 0) setResult(calculate(val, fil));
+    if (!isNaN(val) && val > 0) setResult(calculate(val, fil, freq));
   }
 
   function handleCalculate() {
@@ -399,13 +421,19 @@ export function TakeHomeCalculator() {
       return;
     }
     localStorage.setItem("takeHomeSalary", salary);
-    setResult(calculate(val, filing));
+    setResult(calculate(val, filing, payFrequency));
   }
 
   function handleFilingChange(status: FilingStatus) {
     setFiling(status);
     localStorage.setItem("takeHomeFiling", status);
-    recalculate(salary, status);
+    recalculate(salary, status, payFrequency);
+  }
+
+  function handlePayFrequencyChange(freq: PayFrequency) {
+    setPayFrequency(freq);
+    localStorage.setItem("takeHomePayFrequency", freq);
+    recalculate(salary, filing, freq);
   }
 
   return (
@@ -425,10 +453,18 @@ export function TakeHomeCalculator() {
           </div>
 
           {/* Filing status toggle */}
-          <div style={{ marginBottom: "1.25rem" }}>
+          <div style={{ marginBottom: "0.75rem" }}>
             <div className="ldg-toggle-wrap">
               <button className={`ldg-toggle-btn${filing === "mfj" ? " active" : ""}`} onClick={() => handleFilingChange("mfj")}>Married Filing Jointly</button>
               <button className={`ldg-toggle-btn${filing === "single" ? " active" : ""}`} onClick={() => handleFilingChange("single")}>Single</button>
+            </div>
+          </div>
+
+          {/* Pay frequency toggle */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <div className="ldg-toggle-wrap">
+              <button className={`ldg-toggle-btn${payFrequency === "semimonthly" ? " active" : ""}`} onClick={() => handlePayFrequencyChange("semimonthly")}>Semi-Monthly (24/yr)</button>
+              <button className={`ldg-toggle-btn${payFrequency === "biweekly" ? " active" : ""}`} onClick={() => handlePayFrequencyChange("biweekly")}>Biweekly (26/yr)</button>
             </div>
           </div>
 
@@ -456,7 +492,7 @@ export function TakeHomeCalculator() {
                 style={{ borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", padding: "2.5rem 0 2.75rem", textAlign: "center", marginBottom: "2rem" }}
               >
                 <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--muted)", marginBottom: "1rem" }}>
-                  Per Paycheck · Semi-Monthly
+                  Per Paycheck · {PAY_FREQUENCY_LABELS[payFrequency]}
                 </p>
                 <div className="ldg-hero-amount">{fmt(result.paycheckTakeHome)}</div>
                 <p style={{ marginTop: "0.9rem", fontSize: "0.8rem", color: "var(--muted)" }}>
@@ -485,50 +521,63 @@ export function TakeHomeCalculator() {
 
                 {/* Deductions breakdown */}
                 <div className="ldg-card">
-                  <p className="ldg-card-title">Deductions</p>
-
-                  <div className="ldg-row">
-                    <span className="ldg-row-label">Gross salary</span>
-                    <span className="ldg-row-value ldg-mono">{fmt(result.gross)}</span>
-                  </div>
-                  <div className="ldg-row">
-                    <span className="ldg-row-label muted">Standard deduction</span>
-                    <span className="ldg-row-value ldg-mono muted">− {fmt(result.standardDeduction)}</span>
-                  </div>
-                  <div className="ldg-row">
-                    <span className="ldg-row-label bold" style={{ fontWeight: 600 }}>Taxable income</span>
-                    <span className="ldg-row-value ldg-mono bold">{fmt(result.taxableIncome)}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                    <p className="ldg-card-title" style={{ marginBottom: 0 }}>Deductions</p>
+                    <div className="ldg-toggle-wrap">
+                      <button className={`ldg-toggle-btn${breakdownView === "annual" ? " active" : ""}`} style={{ padding: "0.4rem 0.7rem", fontSize: "0.65rem" }} onClick={() => setBreakdownView("annual")}>Annual</button>
+                      <button className={`ldg-toggle-btn${breakdownView === "perPaycheck" ? " active" : ""}`} style={{ padding: "0.4rem 0.7rem", fontSize: "0.65rem" }} onClick={() => setBreakdownView("perPaycheck")}>Per Paycheck</button>
+                    </div>
                   </div>
 
-                  <hr className="ldg-rule" />
+                  {(() => {
+                    const divisor = breakdownView === "perPaycheck" ? PAYCHECK_DIVISORS[payFrequency] : 1;
+                    return (
+                      <>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label">Gross salary</span>
+                          <span className="ldg-row-value ldg-mono">{fmt(result.gross / divisor)}</span>
+                        </div>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label muted">Standard deduction</span>
+                          <span className="ldg-row-value ldg-mono muted">− {fmt(result.standardDeduction / divisor)}</span>
+                        </div>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label bold" style={{ fontWeight: 600 }}>Taxable income</span>
+                          <span className="ldg-row-value ldg-mono bold">{fmt(result.taxableIncome / divisor)}</span>
+                        </div>
 
-                  <div className="ldg-row">
-                    <span className="ldg-row-label">Federal income tax</span>
-                    <span className="ldg-row-value ldg-mono red">− {fmt(result.federalTax)}</span>
-                  </div>
-                  <div className="ldg-row">
-                    <span className="ldg-row-label">Utah state tax (4.5%)</span>
-                    <span className="ldg-row-value ldg-mono red">− {fmt(result.stateTax)}</span>
-                  </div>
-                  <div className="ldg-row">
-                    <span className="ldg-row-label muted">Social Security (6.2%)</span>
-                    <span className="ldg-row-value ldg-mono muted">− {fmt(result.ss)}</span>
-                  </div>
-                  <div className="ldg-row">
-                    <span className="ldg-row-label muted">Medicare (1.45%+)</span>
-                    <span className="ldg-row-value ldg-mono muted">− {fmt(result.medicare)}</span>
-                  </div>
+                        <hr className="ldg-rule" />
 
-                  <hr className="ldg-rule" />
+                        <div className="ldg-row">
+                          <span className="ldg-row-label">Federal income tax</span>
+                          <span className="ldg-row-value ldg-mono red">− {fmt(result.federalTax / divisor)}</span>
+                        </div>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label">Utah state tax (4.5%)</span>
+                          <span className="ldg-row-value ldg-mono red">− {fmt(result.stateTax / divisor)}</span>
+                        </div>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label muted">Social Security (6.2%)</span>
+                          <span className="ldg-row-value ldg-mono muted">− {fmt(result.ss / divisor)}</span>
+                        </div>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label muted">Medicare (1.45%+)</span>
+                          <span className="ldg-row-value ldg-mono muted">− {fmt(result.medicare / divisor)}</span>
+                        </div>
 
-                  <div className="ldg-row">
-                    <span className="ldg-row-label">Total taxes withheld</span>
-                    <span className="ldg-row-value ldg-mono bold">− {fmt(result.totalTax)}</span>
-                  </div>
-                  <div className="ldg-row">
-                    <span className="ldg-row-label muted">Tithing (10% of gross)</span>
-                    <span className="ldg-row-value ldg-mono muted">− {fmt(result.tithing)}</span>
-                  </div>
+                        <hr className="ldg-rule" />
+
+                        <div className="ldg-row">
+                          <span className="ldg-row-label">Total taxes withheld</span>
+                          <span className="ldg-row-value ldg-mono bold">− {fmt(result.totalTax / divisor)}</span>
+                        </div>
+                        <div className="ldg-row">
+                          <span className="ldg-row-label muted">Tithing (10% of gross)</span>
+                          <span className="ldg-row-value ldg-mono muted">− {fmt(result.tithing / divisor)}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 {/* Bracket breakdown */}
