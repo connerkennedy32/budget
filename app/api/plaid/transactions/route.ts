@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { AccountBase, Transaction } from "plaid";
 import { plaidClient } from "@/lib/plaid";
-import { EXTRA, isTithing, normalizeCategory, TITHING } from "@/lib/plaidCategories";
+import { defaultCategory, EXTRA, normalizeCategory, TITHING } from "@/lib/plaidCategories";
 import { getPlaidCredentials } from "@/lib/plaidStore";
 
 const PLAID_CATEGORIES = [
@@ -73,9 +73,9 @@ export async function GET(request: Request) {
         date: t.date,
         name: t.merchant_name ?? t.name,
         amount: t.amount,
-        category: isTithing(t.merchant_name, t.name)
-          ? TITHING
-          : normalizeCategory(formatCategory(t.personal_finance_category?.primary ?? null)),
+        category:
+          defaultCategory(t.merchant_name, t.name) ??
+          normalizeCategory(formatCategory(t.personal_finance_category?.primary ?? null)),
       }))
       .sort((a, b) => (a.date < b.date ? 1 : -1));
 
