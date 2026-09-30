@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
 type RawTransaction = {
@@ -218,7 +218,12 @@ const CSS = `
   .pld-form-row { display: flex; gap: 0.5rem; }
   .pld-form-row > * { min-width: 0; }
   .pld-form .pld-input { min-height: 40px; padding: 0.45rem 0.6rem; }
-  .pld-form-actions { display: flex; align-items: center; gap: 0.5rem; }
+  .pld-draft { display: flex; flex-direction: column; gap: 0.4rem; padding-bottom: 0.6rem;
+    border-bottom: 1px dashed var(--gold-border); }
+  .pld-draft:last-of-type { border-bottom: 0; padding-bottom: 0; }
+  .pld-x { flex: 0 0 36px; min-height: 40px; border-radius: 8px; cursor: pointer; font-size: 1.1rem;
+    background: transparent; color: var(--muted); border: 1px solid var(--gold-border); }
+  .pld-form-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .pld-form-actions .pld-editor-note { margin-left: auto; text-align: right; }
   .pld-danger { color: #E8A090; border-color: rgba(192, 84, 58, 0.5); }
 
@@ -334,7 +339,15 @@ function CategoryEditor({
   );
 }
 
-function AddTransactionForm({
+type DraftRow = {
+  key: string;
+  name: string;
+  amount: string;
+  category: string;
+  date: string;
+};
+
+function AddTransactionsForm({
   month,
   categories,
   onAdd,
@@ -342,112 +355,161 @@ function AddTransactionForm({
 }: {
   month: string;
   categories: string[];
-  onAdd: (txn: ManualTransaction) => void;
+  onAdd: (txns: ManualTransaction[]) => void;
   onDone: () => void;
 }) {
   const today = isoToday();
-  const nameRef = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  // Date and category stay put between entries, so a batch is quick to enter.
-  const [date, setDate] = useState(today.startsWith(month) ? today : `${month}-01`);
-  const [choice, setChoice] = useState("");
-  const [custom, setCustom] = useState("");
+  const defaultDate = today.startsWith(month) ? today : `${month}-01`;
+  const [rows, setRows] = useState<DraftRow[]>([
+    { key: crypto.randomUUID(), name: "", amount: "", category: "", date: defaultDate },
+  ]);
 
   const [y, m] = month.split("-").map(Number);
-  const lastDay = String(new Date(y, m, 0).getDate()).padStart(2, "0");
-  const category = (choice === NEW_CATEGORY ? custom.trim() : choice).slice(0, 40);
-  const value = Number(amount);
-  const valid =
-    name.trim() !== "" && Number.isFinite(value) && value !== 0 && category !== "" && date !== "";
+  const firstDay = `${month}-01`;
+  const lastDay = `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+  const isBlank = (r: DraftRow) => !r.name.trim() && !r.amount.trim();
+
+  // Editing a row keeps the empty rows below it in step on category and date,
+  // and typing into the last row opens another one.
+  const update = (key: string, patch: Partial<DraftRow>) =>
+    setRows((prev) => {
+      const at = prev.findIndex((r) => r.key === key);
+      const next = prev.map((r, i) =>
+        i === at
+          ? { ...r, ...patch }
+          : i > at && isBlank(r)
+            ? { ...r, category: patch.category ?? r.category, date: patch.date ?? r.date }
+            : r
+      );
+      const last = next[next.length - 1];
+      if (!isBlank(last)) {
+        next.push({ key: crypto.randomUUID(), name: "", amount: "", category: last.category, date: last.date });
+      }
+      return next;
+    });
+
+  const remove = (key: string) =>
+    setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.key !== key) : prev));
+
+  // Typing "food and drink" should land in the existing "Food and drink".
+  const canonicalCategory = (typed: string) => {
+    const t = typed.trim().slice(0, 40);
+    return categories.find((c) => c.toLowerCase() === t.toLowerCase()) ?? t;
+  };
+
+  const filled = rows.filter((r) => !isBlank(r));
+  const checked = filled.map((r) => {
+    const value = Number(r.amount);
+    const ok =
+      r.name.trim() !== "" &&
+      r.amount.trim() !== "" &&
+      Number.isFinite(value) &&
+      value !== 0 &&
+      r.category.trim() !== "" &&
+      r.date >= firstDay &&
+      r.date <= lastDay;
+    return { r, value, ok };
+  });
+  const incomplete = checked.filter((c) => !c.ok).length;
+  const valid = checked.filter((c) => c.ok);
 
   return (
     <form
       className="pld-form"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!valid) return;
-        onAdd({
-          id: `manual-${crypto.randomUUID()}`,
-          date,
-          name: name.trim().slice(0, 60),
-          amount: value,
-          category,
-        });
-        setName("");
-        setAmount("");
-        nameRef.current?.focus();
+        if (incomplete > 0 || valid.length === 0) return;
+        onAdd(
+          valid.map(({ r, value }) => ({
+            id: `manual-${crypto.randomUUID()}`,
+            date: r.date,
+            name: r.name.trim().slice(0, 60),
+            amount: value,
+            category: canonicalCategory(r.category),
+          }))
+        );
+        onDone();
       }}
     >
-      <div className="pld-form-row">
-        <input
-          ref={nameRef}
-          className="pld-input"
-          style={{ flex: 1 }}
-          aria-label="Description"
-          placeholder="Description"
-          maxLength={60}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-        />
-        <input
-          className="pld-input"
-          style={{ width: "6.5rem" }}
-          aria-label="Amount"
-          placeholder="Amount"
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
-      </div>
-      <div className="pld-form-row">
-        <input
-          type="date"
-          className="pld-input"
-          style={{ flex: 1 }}
-          aria-label="Date"
-          value={date}
-          min={`${month}-01`}
-          max={`${month}-${lastDay}`}
-          onChange={(e) => setDate(e.target.value)}
-        />
-        <select
-          className="pld-input"
-          style={{ flex: 1 }}
-          aria-label="Category"
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
-        >
-          <option value="" disabled>
-            Category
-          </option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-          <option value={NEW_CATEGORY}>New category…</option>
-        </select>
-      </div>
-      {choice === NEW_CATEGORY && (
-        <input
-          className="pld-input"
-          aria-label="New category name"
-          placeholder="New category name"
-          maxLength={40}
-          value={custom}
-          onChange={(e) => setCustom(e.target.value)}
-        />
-      )}
+      <datalist id="add-categories">
+        {categories.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
+      {rows.map((r, i) => (
+        <div className="pld-draft" key={r.key}>
+          <div className="pld-form-row">
+            <input
+              id={`add-name-${i}`}
+              className="pld-input"
+              style={{ flex: 1 }}
+              aria-label={`Description, row ${i + 1}`}
+              placeholder="Description"
+              maxLength={60}
+              value={r.name}
+              onChange={(e) => update(r.key, { name: e.target.value })}
+              autoFocus={i === 0}
+            />
+            <input
+              className="pld-input"
+              style={{ width: "5.5rem" }}
+              aria-label={`Amount, row ${i + 1}`}
+              placeholder="Amount"
+              inputMode="decimal"
+              value={r.amount}
+              onChange={(e) => update(r.key, { amount: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                document.getElementById(`add-name-${i + 1}`)?.focus();
+              }}
+            />
+            <button
+              type="button"
+              className="pld-x"
+              aria-label={`Remove row ${i + 1}`}
+              disabled={rows.length === 1}
+              onClick={() => remove(r.key)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="pld-form-row">
+            <input
+              className="pld-input"
+              style={{ flex: 1 }}
+              list="add-categories"
+              aria-label={`Category, row ${i + 1}`}
+              placeholder="Category (pick or type)"
+              maxLength={40}
+              value={r.category}
+              onChange={(e) => update(r.key, { category: e.target.value })}
+            />
+            <input
+              type="date"
+              className="pld-input"
+              style={{ flex: "0 0 8.75rem" }}
+              aria-label={`Date, row ${i + 1}`}
+              value={r.date}
+              min={firstDay}
+              max={lastDay}
+              onChange={(e) => update(r.key, { date: e.target.value })}
+            />
+          </div>
+        </div>
+      ))}
       <div className="pld-form-actions">
-        <button className="pld-btn pld-btn-small" disabled={!valid}>
-          Add
+        <button className="pld-btn pld-btn-small" disabled={valid.length === 0 || incomplete > 0}>
+          {valid.length > 0 ? `Add ${valid.length}` : "Add"}
         </button>
         <button type="button" className="pld-btn pld-btn-quiet pld-btn-small" onClick={onDone}>
-          Done
+          Cancel
         </button>
-        <span className="pld-editor-note">Negative amount = refund</span>
+        <span className="pld-editor-note">
+          {incomplete > 0
+            ? `${incomplete} incomplete row${incomplete > 1 ? "s" : ""}`
+            : "Negative amount = refund"}
+        </span>
       </div>
     </form>
   );
@@ -821,10 +883,10 @@ export default function PlaidPage() {
                   )}
                 </div>
                 {adding && (
-                  <AddTransactionForm
+                  <AddTransactionsForm
                     month={data?.month ?? month}
                     categories={categoryOptions}
-                    onAdd={(txn) => saveManual([...manual, txn])}
+                    onAdd={(txns) => saveManual([...manual, ...txns])}
                     onDone={() => setAdding(false)}
                   />
                 )}
