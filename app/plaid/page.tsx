@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
 type RawTransaction = {
@@ -213,9 +213,13 @@ const CSS = `
   .pld-btn-small { padding: 0.5rem 0.9rem; min-height: 40px; font-size: 0.85rem; }
   .pld-txn-hidden { opacity: 0.45; }
   .pld-txn-hidden .pld-txn-name, .pld-txn-hidden .pld-txn-amt { text-decoration: line-through; }
-  .pld-form { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 1rem;
-    background: var(--gold-soft); border-radius: 10px; padding: 0.9rem; }
-  .pld-form label { font-size: 0.8rem; color: var(--muted); }
+  .pld-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;
+    background: var(--gold-soft); border-radius: 10px; padding: 0.6rem; }
+  .pld-form-row { display: flex; gap: 0.5rem; }
+  .pld-form-row > * { min-width: 0; }
+  .pld-form .pld-input { min-height: 40px; padding: 0.45rem 0.6rem; }
+  .pld-form-actions { display: flex; align-items: center; gap: 0.5rem; }
+  .pld-form-actions .pld-editor-note { margin-left: auto; text-align: right; }
   .pld-danger { color: #E8A090; border-color: rgba(192, 84, 58, 0.5); }
 
   .pld-btn {
@@ -334,16 +338,18 @@ function AddTransactionForm({
   month,
   categories,
   onAdd,
-  onCancel,
+  onDone,
 }: {
   month: string;
   categories: string[];
   onAdd: (txn: ManualTransaction) => void;
-  onCancel: () => void;
+  onDone: () => void;
 }) {
   const today = isoToday();
+  const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
+  // Date and category stay put between entries, so a batch is quick to enter.
   const [date, setDate] = useState(today.startsWith(month) ? today : `${month}-01`);
   const [choice, setChoice] = useState("");
   const [custom, setCustom] = useState("");
@@ -368,35 +374,80 @@ function AddTransactionForm({
           amount: value,
           category,
         });
+        setName("");
+        setAmount("");
+        nameRef.current?.focus();
       }}
     >
-      <label htmlFor="add-name">Description</label>
-      <input id="add-name" className="pld-input" maxLength={60} value={name}
-        onChange={(e) => setName(e.target.value)} autoFocus />
-      <label htmlFor="add-amount">Amount</label>
-      <input id="add-amount" className="pld-input" inputMode="decimal" placeholder="0.00"
-        value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <p className="pld-editor-note">Use a negative amount for a refund or credit.</p>
-      <label htmlFor="add-date">Date</label>
-      <input id="add-date" type="date" className="pld-input" value={date}
-        min={`${month}-01`} max={`${month}-${lastDay}`}
-        onChange={(e) => setDate(e.target.value)} />
-      <label htmlFor="add-category">Category</label>
-      <select id="add-category" className="pld-input" value={choice}
-        onChange={(e) => setChoice(e.target.value)}>
-        <option value="" disabled>Choose a category</option>
-        {categories.map((c) => (
-          <option key={c} value={c}>{c}</option>
-        ))}
-        <option value={NEW_CATEGORY}>New category…</option>
-      </select>
+      <div className="pld-form-row">
+        <input
+          ref={nameRef}
+          className="pld-input"
+          style={{ flex: 1 }}
+          aria-label="Description"
+          placeholder="Description"
+          maxLength={60}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+        />
+        <input
+          className="pld-input"
+          style={{ width: "6.5rem" }}
+          aria-label="Amount"
+          placeholder="Amount"
+          inputMode="decimal"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </div>
+      <div className="pld-form-row">
+        <input
+          type="date"
+          className="pld-input"
+          style={{ flex: 1 }}
+          aria-label="Date"
+          value={date}
+          min={`${month}-01`}
+          max={`${month}-${lastDay}`}
+          onChange={(e) => setDate(e.target.value)}
+        />
+        <select
+          className="pld-input"
+          style={{ flex: 1 }}
+          aria-label="Category"
+          value={choice}
+          onChange={(e) => setChoice(e.target.value)}
+        >
+          <option value="" disabled>
+            Category
+          </option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+          <option value={NEW_CATEGORY}>New category…</option>
+        </select>
+      </div>
       {choice === NEW_CATEGORY && (
-        <input className="pld-input" placeholder="Category name" maxLength={40}
-          value={custom} onChange={(e) => setCustom(e.target.value)} />
+        <input
+          className="pld-input"
+          aria-label="New category name"
+          placeholder="New category name"
+          maxLength={40}
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+        />
       )}
-      <div className="pld-editor-actions">
-        <button className="pld-btn" disabled={!valid}>Add transaction</button>
-        <button type="button" className="pld-btn pld-btn-quiet" onClick={onCancel}>Cancel</button>
+      <div className="pld-form-actions">
+        <button className="pld-btn pld-btn-small" disabled={!valid}>
+          Add
+        </button>
+        <button type="button" className="pld-btn pld-btn-quiet pld-btn-small" onClick={onDone}>
+          Done
+        </button>
+        <span className="pld-editor-note">Negative amount = refund</span>
       </div>
     </form>
   );
@@ -773,11 +824,8 @@ export default function PlaidPage() {
                   <AddTransactionForm
                     month={data?.month ?? month}
                     categories={categoryOptions}
-                    onAdd={(txn) => {
-                      saveManual([...manual, txn]);
-                      setAdding(false);
-                    }}
-                    onCancel={() => setAdding(false)}
+                    onAdd={(txn) => saveManual([...manual, txn])}
+                    onDone={() => setAdding(false)}
                   />
                 )}
                 {transactions.length === 0 && !error && (
