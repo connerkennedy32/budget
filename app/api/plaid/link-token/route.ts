@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server";
 import { CountryCode, Products } from "plaid";
 import { plaidClient } from "@/lib/plaid";
+import { getPlaidCredentials } from "@/lib/plaidStore";
 
 export async function POST() {
+  if (getPlaidCredentials()) {
+    return NextResponse.json(
+      { error: "A bank is already connected." },
+      { status: 409 }
+    );
+  }
+
   try {
     const response = await plaidClient.linkTokenCreate({
       user: { client_user_id: "budget-app-local-user" },

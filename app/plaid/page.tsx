@@ -567,10 +567,6 @@ export default function PlaidPage() {
                 })}
               </section>
               </div>
-
-              <button className="pld-btn pld-btn-quiet" onClick={fetchLinkToken}>
-                Connect another bank
-              </button>
             </>
           )}
         </div>

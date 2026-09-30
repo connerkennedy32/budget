@@ -109,7 +109,7 @@ export async function GET(request: Request) {
       "response" in err &&
       // @ts-expect-error - narrowing a third-party error shape
       err.response?.data?.error_code === "ITEM_LOGIN_REQUIRED"
-        ? "Your linked bank needs to be reconnected. Click Connect a bank to relink."
+        ? "Your bank connection has expired. Delete .plaid/data.json and reload to reconnect."
         : "Failed to fetch transactions from Plaid.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

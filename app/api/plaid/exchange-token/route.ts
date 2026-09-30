@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
-import { savePlaidCredentials } from "@/lib/plaidStore";
+import { getPlaidCredentials, savePlaidCredentials } from "@/lib/plaidStore";
 
 export async function POST(request: Request) {
+  if (getPlaidCredentials()) {
+    return NextResponse.json(
+      { error: "A bank is already connected." },
+      { status: 409 }
+    );
+  }
+
   const { publicToken } = (await request.json()) as { publicToken?: string };
   if (!publicToken) {
     return NextResponse.json(
