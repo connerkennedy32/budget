@@ -13,12 +13,26 @@ type Transaction = {
   category: string | null;
 };
 
+type Account = {
+  id: string;
+  name: string;
+  type: string;
+  balance: number;
+};
+
+const formatMoney = (n: number) =>
+  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+// Credit and loan balances are amounts owed, so they reduce the total.
+const isLiability = (type: string) => type === "credit" || type === "loan";
+
 type Status = "loading" | "not_linked" | "linked";
 
 export default function PlaidPage() {
   const [status, setStatus] = useState<Status>("loading");
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const checkStatus = useCallback(async () => {
@@ -30,13 +44,14 @@ export default function PlaidPage() {
   const loadTransactions = useCallback(async () => {
     const res = await fetch("/api/plaid/transactions");
     const data = (await res.json()) as
-      | { transactions: Transaction[] }
+      | { transactions: Transaction[]; accounts: Account[] }
       | { error: string };
     if ("error" in data) {
       setError(data.error);
       return;
     }
     setTransactions(data.transactions);
+    setAccounts(data.accounts);
   }, []);
 
   useEffect(() => {
@@ -51,7 +66,7 @@ export default function PlaidPage() {
       .then(
         (res) =>
           res.json() as Promise<
-            { transactions: Transaction[] } | { error: string }
+            { transactions: Transaction[]; accounts: Account[] } | { error: string }
           >
       )
       .then((data) => {
@@ -60,6 +75,7 @@ export default function PlaidPage() {
           return;
         }
         setTransactions(data.transactions);
+        setAccounts(data.accounts);
       });
   }, [status]);
 
@@ -131,6 +147,34 @@ export default function PlaidPage() {
 
           {status === "linked" && (
             <div className="flex flex-col gap-2">
+              {accounts.length > 0 && (
+                <div className="mb-2 flex flex-col gap-1 rounded-lg bg-muted/50 p-3 text-sm">
+                  <div className="flex items-center justify-between font-medium">
+                    <span>Total balance</span>
+                    <span>
+                      {formatMoney(
+                        accounts.reduce(
+                          (sum, a) =>
+                            sum + (isLiability(a.type) ? -a.balance : a.balance),
+                          0
+                        )
+                      )}
+                    </span>
+                  </div>
+                  {accounts.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between text-xs text-muted-foreground"
+                    >
+                      <span>{a.name}</span>
+                      <span>
+                        {isLiability(a.type) ? "-" : ""}
+                        {formatMoney(a.balance)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {transactions.length === 0 && !error && (
                 <p className="text-sm text-muted-foreground">
                   No transactions in the last 30 days.

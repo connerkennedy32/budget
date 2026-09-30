@@ -34,7 +34,14 @@ export async function GET() {
       }))
       .sort((a, b) => (a.date < b.date ? 1 : -1));
 
-    return NextResponse.json({ transactions });
+    const accounts = response.data.accounts.map((a) => ({
+      id: a.account_id,
+      name: a.name,
+      type: a.type,
+      balance: a.balances.current ?? 0,
+    }));
+
+    return NextResponse.json({ transactions, accounts });
   } catch (err) {
     console.error("plaid transactions error", err);
     const message =
