@@ -22,6 +22,8 @@ export const isTithing = (...names: Array<string | null | undefined>) =>
 // the exact name (so "American Fork UT" is a different merchant).
 const CATEGORY_BY_NAME: Record<string, string> = {
   "american fork": "Rent and utilities",
+  costco: "Food and drink",
+  target: "Food and drink",
 };
 
 // The category a merchant gets before any rule saved on a device applies.
