@@ -10,6 +10,7 @@ const MERGED_INTO_EXTRA = new Set([
 export const EXTRA = "Extra";
 export const TITHING = "Tithing";
 export const SUBSCRIPTION = "Subscription";
+export const INSURANCE = "Insurance";
 
 // Applies to Plaid's categories and to anything typed or saved by hand, so
 // "entertainment" typed into the picker also lands in Extra.
@@ -28,6 +29,7 @@ const CATEGORY_BY_NAME: Record<string, string> = {
   "google play store": SUBSCRIPTION,
   "google one": SUBSCRIPTION,
   netflix: SUBSCRIPTION,
+  "state farm": INSURANCE,
   apple: SUBSCRIPTION,
   spotify: SUBSCRIPTION,
   cursor: SUBSCRIPTION,

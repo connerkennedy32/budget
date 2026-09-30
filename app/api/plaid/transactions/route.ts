@@ -4,6 +4,7 @@ import { plaidClient } from "@/lib/plaid";
 import {
   defaultCategory,
   EXTRA,
+  INSURANCE,
   normalizeCategory,
   SUBSCRIPTION,
   TITHING,
@@ -88,6 +89,7 @@ export async function GET(request: Request) {
     const categories = [
       ...PLAID_CATEGORIES.map(formatCategory),
       EXTRA,
+      INSURANCE,
       SUBSCRIPTION,
       TITHING,
     ].sort();
