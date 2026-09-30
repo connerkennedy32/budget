@@ -4,7 +4,9 @@ import { plaidClient } from "@/lib/plaid";
 import {
   defaultCategory,
   EXTRA,
+  HOUSING,
   INSURANCE,
+  isCardPaymentOrTransfer,
   normalizeCategory,
   SUBSCRIPTION,
   TITHING,
@@ -16,9 +18,7 @@ const PLAID_CATEGORIES = [
   "GOVERNMENT_AND_NON_PROFIT",
   "HOME_IMPROVEMENT",
   "INCOME",
-  "LOAN_PAYMENTS",
   "MEDICAL",
-  "RENT_AND_UTILITIES",
   "TRANSFER_IN",
   "TRANSFER_OUT",
   "TRANSPORTATION",
@@ -82,13 +82,17 @@ export async function GET(request: Request) {
         amount: t.amount,
         category:
           defaultCategory(t.merchant_name, t.name) ??
-          normalizeCategory(formatCategory(t.personal_finance_category?.primary ?? null)),
+          (t.personal_finance_category?.primary === "LOAN_PAYMENTS" &&
+          isCardPaymentOrTransfer(t.merchant_name, t.name)
+            ? EXTRA
+            : normalizeCategory(formatCategory(t.personal_finance_category?.primary ?? null))),
       }))
       .sort((a, b) => (a.date < b.date ? 1 : -1));
 
     const categories = [
       ...PLAID_CATEGORIES.map(formatCategory),
       EXTRA,
+      HOUSING,
       INSURANCE,
       SUBSCRIPTION,
       TITHING,
