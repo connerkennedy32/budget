@@ -24,8 +24,12 @@ export async function POST() {
 
   try {
     const session = await plaidClient.linkTokenGet({ link_token: linkToken });
+    // Plaid reports a finished sign-in under results; on_success is the older field.
     const publicToken = session.data.link_sessions
-      ?.map((s) => s.on_success?.public_token)
+      ?.flatMap((s) => [
+        ...(s.results?.item_add_results.map((r) => r.public_token) ?? []),
+        s.on_success?.public_token,
+      ])
       .find(Boolean);
     if (!publicToken) {
       return NextResponse.json({ recovered: false });
