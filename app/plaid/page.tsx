@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
+import { normalizeCategory } from "@/lib/plaidCategories";
 
 type RawTransaction = {
   id: string;
@@ -311,7 +312,9 @@ function CategoryEditor({
   const options = categories.includes(txn.category)
     ? categories
     : [...categories, txn.category].sort();
-  const finalCategory = (choice === NEW_CATEGORY ? custom.trim() : choice).slice(0, 40);
+  const finalCategory = normalizeCategory(
+    (choice === NEW_CATEGORY ? custom.trim() : choice).slice(0, 40)
+  );
 
   return (
     <div className="pld-editor">
@@ -437,7 +440,8 @@ function AddTransactionsForm({
   // Typing "food and drink" should land in the existing "Food and drink".
   const canonicalCategory = (typed: string) => {
     const t = typed.trim().slice(0, 40);
-    return categories.find((c) => c.toLowerCase() === t.toLowerCase()) ?? t;
+    const named = normalizeCategory(t);
+    return categories.find((c) => c.toLowerCase() === named.toLowerCase()) ?? named;
   };
 
   const filled = rows.filter((r) => !isBlank(r));
@@ -591,7 +595,8 @@ export default function PlaidPage() {
   const transactions = useMemo<Transaction[]>(() => {
     const hidden = new Set(hiddenIds);
     const fromBank = (data?.transactions ?? []).map((t) => {
-      const custom = rules[ruleKey(t.name)];
+      const stored = rules[ruleKey(t.name)];
+      const custom = stored === undefined ? undefined : normalizeCategory(stored);
       return {
         ...t,
         category: custom ?? t.category,
@@ -603,7 +608,13 @@ export default function PlaidPage() {
     const shownMonth = data?.month ?? month;
     const mine = manual
       .filter((m) => m.date.startsWith(shownMonth))
-      .map((m) => ({ ...m, isCustom: false, hidden: hidden.has(m.id), manual: true }));
+      .map((m) => ({
+        ...m,
+        category: normalizeCategory(m.category),
+        isCustom: false,
+        hidden: hidden.has(m.id),
+        manual: true,
+      }));
     return [...fromBank, ...mine].sort((a, b) =>
       a.date < b.date ? 1 : a.date > b.date ? -1 : 0
     );
@@ -614,8 +625,8 @@ export default function PlaidPage() {
       [
         ...new Set([
           ...(data?.categories ?? []),
-          ...Object.values(rules),
-          ...manual.map((m) => m.category),
+          ...Object.values(rules).map(normalizeCategory),
+          ...manual.map((m) => normalizeCategory(m.category)),
         ]),
       ].sort(),
     [data, rules, manual]
@@ -624,7 +635,7 @@ export default function PlaidPage() {
   const saveRule = (merchant: string, category: string | null) => {
     const next = { ...rules };
     if (category === null) delete next[ruleKey(merchant)];
-    else next[ruleKey(merchant)] = category;
+    else next[ruleKey(merchant)] = normalizeCategory(category);
     setRules(next);
     writeStored(RULES_KEY, next);
     setOpenId(null);
