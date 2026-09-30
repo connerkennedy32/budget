@@ -310,7 +310,12 @@ function CategoryEditor({
         ref={selectRef}
         className="pld-input"
         value={choice}
-        onChange={(e) => setChoice(e.target.value)}
+        onChange={(e) => {
+          const picked = e.target.value;
+          setChoice(picked);
+          // Opened from the category label: picking one is the whole action.
+          if (pickerToken && picked !== NEW_CATEGORY) onSave(picked);
+        }}
       >
         {options.map((c) => (
           <option key={c} value={c}>
@@ -326,6 +331,9 @@ function CategoryEditor({
           maxLength={40}
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && finalCategory) onSave(finalCategory);
+          }}
           autoFocus
         />
       )}
