@@ -2,16 +2,17 @@ import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
 import { linkingDisabled, linkingDisabledResponse } from "@/lib/plaidLinking";
 import {
+  addPlaidCredentials,
   clearPendingLink,
-  getPlaidCredentials,
-  savePlaidCredentials,
+  getAllPlaidCredentials,
+  MAX_CONNECTIONS,
 } from "@/lib/plaidStore";
 
 export async function POST(request: Request) {
   if (linkingDisabled()) return linkingDisabledResponse();
-  if (getPlaidCredentials()) {
+  if (getAllPlaidCredentials().length >= MAX_CONNECTIONS) {
     return NextResponse.json(
-      { error: "A bank is already connected." },
+      { error: "The connection limit has been reached." },
       { status: 409 }
     );
   }
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     const response = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
     });
-    savePlaidCredentials({
+    addPlaidCredentials({
       accessToken: response.data.access_token,
       itemId: response.data.item_id,
     });

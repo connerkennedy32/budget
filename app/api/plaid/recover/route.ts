@@ -2,28 +2,27 @@ import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
 import { linkingDisabled, linkingDisabledResponse } from "@/lib/plaidLinking";
 import {
+  addPlaidCredentials,
   clearPendingLink,
-  getPendingLinkToken,
-  getPlaidCredentials,
-  savePlaidCredentials,
+  getPendingLink,
 } from "@/lib/plaidStore";
 
 // If the browser never reported a finished link (a popup closed, an OAuth
 // redirect got lost), ask Plaid whether the pending session actually
 // succeeded and finish the exchange here, so a completed sign-in isn't
-// wasted.
+// wasted. Safe to call any time: with nothing pending it does nothing.
 export async function POST() {
   if (linkingDisabled()) return linkingDisabledResponse();
-  if (getPlaidCredentials()) {
-    return NextResponse.json({ recovered: false });
-  }
-  const linkToken = getPendingLinkToken();
-  if (!linkToken) {
+  const pending = getPendingLink();
+  // Re-authenticating an existing connection has no public token to exchange,
+  // and by the time the page asks again that attempt is over.
+  if (pending?.itemId) clearPendingLink();
+  if (!pending || pending.itemId) {
     return NextResponse.json({ recovered: false });
   }
 
   try {
-    const session = await plaidClient.linkTokenGet({ link_token: linkToken });
+    const session = await plaidClient.linkTokenGet({ link_token: pending.linkToken });
     // Plaid reports a finished sign-in under results; on_success is the older field.
     const publicToken = session.data.link_sessions
       ?.flatMap((s) => [
@@ -38,7 +37,7 @@ export async function POST() {
     const response = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
     });
-    savePlaidCredentials({
+    addPlaidCredentials({
       accessToken: response.data.access_token,
       itemId: response.data.item_id,
     });

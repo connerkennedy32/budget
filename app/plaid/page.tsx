@@ -10,6 +10,10 @@ type RawTransaction = {
   name: string;
   amount: number;
   category: string;
+  // Present on bank transactions (not manual ones).
+  accountId?: string;
+  // A card payment that also shows on the card: hidden unless you un-hide it.
+  defaultHidden?: boolean;
 };
 
 type Transaction = RawTransaction & {
@@ -27,13 +31,25 @@ type CategoryRules = Record<string, string>;
 type Account = {
   id: string;
   name: string;
+  mask: string | null;
   type: string;
   balance: number;
+  itemId: string;
 };
 
+// One connected bank that couldn't be loaded.
+type ItemError = { itemId: string; message: string; loginRequired: boolean };
+
 type TransactionsResponse =
-  | { transactions: RawTransaction[]; accounts: Account[]; categories: string[] }
-  | { error: string };
+  | {
+      transactions: RawTransaction[];
+      accounts: Account[];
+      categories: string[];
+      itemErrors: ItemError[];
+    }
+  | { error: string; itemErrors?: ItemError[] };
+
+type StatusResponse = { linked: boolean; count: number; canLink: boolean };
 
 type Status = "loading" | "not_linked" | "linked";
 
@@ -44,6 +60,8 @@ const NON_SPENDING = new Set(["Income", "Transfer in", "Transfer out", "Tithing"
 const NEW_CATEGORY = "__new__";
 const RULES_KEY = "plaid-category-rules-v1";
 const HIDDEN_KEY = "plaid-hidden-v1";
+// Charges you un-hid that would otherwise start hidden (matched card payments).
+const SHOWN_KEY = "plaid-shown-v1";
 const MANUAL_KEY = "plaid-manual-v1";
 const ruleKey = (merchant: string) => merchant.trim().toLowerCase();
 
@@ -233,6 +251,7 @@ const CSS = `
   .pld-cardhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
   .pld-cardhead .pld-card-title { margin: 0; }
   .pld-btn-small { padding: 0.5rem 0.9rem; min-height: 40px; font-size: 0.85rem; }
+  .pld-filter { margin-bottom: 1rem; }
   .pld-txn-hidden { opacity: 0.45; }
   .pld-txn-hidden .pld-txn-name, .pld-txn-hidden .pld-txn-amt { text-decoration: line-through; }
   .pld-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;
@@ -577,6 +596,16 @@ export default function PlaidPage() {
   const [hiddenIds, setHiddenIds] = useState<string[]>(() =>
     readStored<string[]>(HIDDEN_KEY, [])
   );
+  const [shownIds, setShownIds] = useState<string[]>(() =>
+    readStored<string[]>(SHOWN_KEY, [])
+  );
+  const [accountFilter, setAccountFilter] = useState("all");
+  const [itemErrors, setItemErrors] = useState<ItemError[]>([]);
+  const [connections, setConnections] = useState({ count: 0, canLink: false });
+  // Set while Link is re-authenticating an existing connection rather than
+  // adding one. A ref as well, because Link's callbacks are created once.
+  const [updatingItem, setUpdatingItem] = useState<string | null>(null);
+  const updatingRef = useRef<string | null>(null);
   const [manual, setManual] = useState<ManualTransaction[]>(() =>
     readStored<ManualTransaction[]>(MANUAL_KEY, [])
   );
@@ -593,8 +622,17 @@ export default function PlaidPage() {
   const [error, setError] = useState<string | null>(null);
 
   const currentMonth = monthOf(new Date());
+  const accounts = useMemo(() => data?.accounts ?? [], [data]);
+  // A filter for an account that's no longer listed falls back to "All".
+  const activeFilter = accounts.some((a) => a.id === accountFilter) ? accountFilter : "all";
+  const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const accountLabel = (a: Account) =>
+    `${a.name.length > 22 ? `${a.name.slice(0, 21)}…` : a.name}${a.mask ? ` ···${a.mask}` : ""}`;
   const transactions = useMemo<Transaction[]>(() => {
     const hidden = new Set(hiddenIds);
+    const shown = new Set(shownIds);
+    const isHidden = (t: RawTransaction) =>
+      shown.has(t.id) ? false : hidden.has(t.id) || t.defaultHidden === true;
     const fromBank = (data?.transactions ?? []).map((t) => {
       const stored = rules[ruleKey(t.name)];
       const custom = stored === undefined ? undefined : normalizeCategory(stored);
@@ -602,7 +640,7 @@ export default function PlaidPage() {
         ...t,
         category: custom ?? t.category,
         isCustom: custom !== undefined,
-        hidden: hidden.has(t.id),
+        hidden: isHidden(t),
         manual: false,
       };
     });
@@ -616,11 +654,10 @@ export default function PlaidPage() {
         hidden: hidden.has(m.id),
         manual: true,
       }));
-    return [...fromBank, ...mine].sort((a, b) =>
-      a.date < b.date ? 1 : a.date > b.date ? -1 : 0
-    );
-  }, [data, rules, hiddenIds, manual, month]);
-  const accounts = data?.accounts ?? [];
+    // Manual entries belong to no account, so they only show under "All".
+    const everything = activeFilter === "all" ? [...fromBank, ...mine] : fromBank.filter((t) => t.accountId === activeFilter);
+    return everything.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  }, [data, rules, hiddenIds, shownIds, manual, month, activeFilter]);
   const categoryOptions = useMemo(
     () =>
       [
@@ -642,12 +679,20 @@ export default function PlaidPage() {
     setOpenId(null);
   };
 
-  const toggleHidden = (id: string) => {
-    const next = hiddenIds.includes(id)
-      ? hiddenIds.filter((h) => h !== id)
-      : [...hiddenIds, id];
-    setHiddenIds(next);
-    writeStored(HIDDEN_KEY, next);
+  // Hidden starts from the charge's default (matched card payments start
+  // hidden) and is overridden by anything you chose yourself.
+  const toggleHidden = (t: Transaction) => {
+    let nextHidden = hiddenIds.filter((h) => h !== t.id);
+    let nextShown = shownIds.filter((s) => s !== t.id);
+    if (t.hidden) {
+      if (t.defaultHidden) nextShown = [...nextShown, t.id];
+    } else {
+      nextHidden = [...nextHidden, t.id];
+    }
+    setHiddenIds(nextHidden);
+    setShownIds(nextShown);
+    writeStored(HIDDEN_KEY, nextHidden);
+    writeStored(SHOWN_KEY, nextShown);
     setOpenId(null);
   };
 
@@ -667,14 +712,18 @@ export default function PlaidPage() {
 
   const checkStatus = useCallback(async () => {
     const res = await apiFetch("/api/plaid/status");
-    const data = (await res.json()) as { linked: boolean };
+    const data = (await res.json()) as StatusResponse;
+    setConnections({ count: data.count, canLink: data.canLink });
     setStatus(data.linked ? "linked" : "not_linked");
   }, []);
 
   useEffect(() => {
     apiFetch("/api/plaid/status")
-      .then((res) => res.json() as Promise<{ linked: boolean }>)
-      .then((data) => setStatus(data.linked ? "linked" : "not_linked"));
+      .then((res) => res.json() as Promise<StatusResponse>)
+      .then((data) => {
+        setConnections({ count: data.count, canLink: data.canLink });
+        setStatus(data.linked ? "linked" : "not_linked");
+      });
   }, []);
 
   useEffect(() => {
@@ -684,6 +733,7 @@ export default function PlaidPage() {
       .then((res) => res.json() as Promise<TransactionsResponse>)
       .then((json) => {
         if (stale) return;
+        setItemErrors(json.itemErrors ?? []);
         if ("error" in json) {
           setError(json.error);
           return;
@@ -699,9 +749,14 @@ export default function PlaidPage() {
     };
   }, [status, month, refresh]);
 
-  const fetchLinkToken = useCallback(async () => {
+  // With an itemId, re-authenticates that connection (no new Plaid slot).
+  const fetchLinkToken = useCallback(async (itemId?: string) => {
     setError(null);
-    const res = await fetch("/api/plaid/link-token", { method: "POST" });
+    const res = await fetch("/api/plaid/link-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(itemId ? { itemId } : {}),
+    });
     const data = (await res.json()) as
       | { linkToken: string }
       | { error: string };
@@ -709,6 +764,8 @@ export default function PlaidPage() {
       setError(data.error);
       return;
     }
+    updatingRef.current = itemId ?? null;
+    setUpdatingItem(itemId ?? null);
     setLinkToken(data.linkToken);
   }, []);
 
@@ -716,13 +773,27 @@ export default function PlaidPage() {
   const recover = useCallback(async () => {
     const res = await fetch("/api/plaid/recover", { method: "POST" });
     const data = (await res.json()) as { recovered?: boolean };
-    if (data.recovered) await checkStatus();
+    if (data.recovered) {
+      await checkStatus();
+      setRefresh((n) => n + 1);
+    }
   }, [checkStatus]);
 
   const { open, ready } = usePlaidLink({
     token: linkToken,
     receivedRedirectUri,
     onSuccess: async (publicToken) => {
+      if (updatingRef.current) {
+        // Re-authenticated an existing connection: same token, nothing to exchange.
+        updatingRef.current = null;
+        setUpdatingItem(null);
+        setLinkToken(null);
+        setReceivedRedirectUri(undefined);
+        window.history.replaceState(null, "", "/plaid");
+        setError(null);
+        setRefresh((n) => n + 1);
+        return;
+      }
       const res = await fetch("/api/plaid/exchange-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -737,11 +808,14 @@ export default function PlaidPage() {
       setReceivedRedirectUri(undefined);
       window.history.replaceState(null, "", "/plaid");
       await checkStatus();
+      setRefresh((n) => n + 1);
     },
     onExit: (err, metadata) => {
       console.info("plaid link exit", err, metadata);
       setLinkToken(null);
       setReceivedRedirectUri(undefined);
+      updatingRef.current = null;
+      setUpdatingItem(null);
       window.history.replaceState(null, "", "/plaid");
       recover();
       if (err) {
@@ -758,14 +832,17 @@ export default function PlaidPage() {
   });
 
   // Coming back from a bank's own sign-in page: resume the same Link session.
-  // Otherwise, finish any sign-in the browser lost track of.
+  // Otherwise, finish any sign-in the browser lost track of (with nothing
+  // pending, the server just says no).
   useEffect(() => {
-    if (status !== "not_linked") return;
+    if (status === "loading") return;
     if (window.location.search.includes("oauth_state_id")) {
       fetch("/api/plaid/link-token")
-        .then((res) => res.json() as Promise<{ linkToken: string | null }>)
+        .then((res) => res.json() as Promise<{ linkToken?: string | null; itemId?: string | null }>)
         .then((json) => {
           if (json.linkToken) {
+            updatingRef.current = json.itemId ?? null;
+            setUpdatingItem(json.itemId ?? null);
             setReceivedRedirectUri(window.location.href);
             setLinkToken(json.linkToken);
           }
@@ -775,7 +852,9 @@ export default function PlaidPage() {
     fetch("/api/plaid/recover", { method: "POST" })
       .then((res) => res.json() as Promise<{ recovered?: boolean }>)
       .then((json) => {
-        if (json.recovered) setStatus("linked");
+        if (!json.recovered) return;
+        setStatus("linked");
+        setRefresh((n) => n + 1);
       });
   }, [status]);
 
@@ -871,8 +950,10 @@ export default function PlaidPage() {
               >
                     {t.category}
                   </span>
+                  {accounts.length > 1 && t.accountId && accountById.get(t.accountId) &&
+                    ` · ${accountLabel(accountById.get(t.accountId)!)}`}
                   {t.manual && " · Added by you"}
-                  {t.hidden && " · Hidden"}
+                  {t.hidden && (t.defaultHidden ? " · Hidden (card payment)" : " · Hidden")}
                 </div>
               </div>
               <span
@@ -896,7 +977,7 @@ export default function PlaidPage() {
                   );
                   setOpenId(null);
                 }}
-                onToggleHidden={() => toggleHidden(t.id)}
+                onToggleHidden={() => toggleHidden(t)}
                 onDelete={t.manual ? () => deleteManual(t.id) : undefined}
                 onCancel={() => setOpenId(null)}
               />
@@ -910,7 +991,27 @@ export default function PlaidPage() {
       <style>{CSS}</style>
       <div className="pld flex-1 overflow-auto">
         <div className="pld-inner">
-          {error && (
+          {itemErrors.map((e) => (
+            <div className="pld-error" role="alert" key={e.itemId}>
+              <span>{e.message}</span>
+              {e.loginRequired &&
+                (connections.canLink || updatingItem === e.itemId ? (
+                  <button
+                    className="pld-btn pld-btn-quiet"
+                    disabled={updatingItem === e.itemId}
+                    onClick={() => fetchLinkToken(e.itemId)}
+                  >
+                    Reconnect
+                  </button>
+                ) : (
+                  <span className="pld-muted">
+                    Open this app on your computer to reconnect it.
+                  </span>
+                ))}
+            </div>
+          ))}
+
+          {error && itemErrors.length === 0 && (
             <div className="pld-error" role="alert">
               <span>{error}</span>
               <button
@@ -934,7 +1035,7 @@ export default function PlaidPage() {
                 See where your money goes
               </h1>
               <p>Connect a bank to break down the last 30 days by category.</p>
-              <button className="pld-btn" onClick={fetchLinkToken}>
+              <button className="pld-btn" onClick={() => fetchLinkToken()}>
                 Connect a bank
               </button>
             </div>
@@ -963,6 +1064,22 @@ export default function PlaidPage() {
                   ›
                 </button>
               </div>
+
+              {accounts.length > 1 && (
+                <select
+                  className="pld-input pld-filter"
+                  aria-label="Show transactions from"
+                  value={activeFilter}
+                  onChange={(e) => setAccountFilter(e.target.value)}
+                >
+                  <option value="all">All accounts</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {accountLabel(a)}
+                    </option>
+                  ))}
+                </select>
+              )}
 
               <div className={loading ? "pld-loading" : undefined} aria-busy={loading}>
               <header className="pld-hero">
@@ -1043,7 +1160,7 @@ export default function PlaidPage() {
                   <h2 className="pld-card-title">Accounts</h2>
                   {accounts.map((a) => (
                     <div className="pld-acct" key={a.id}>
-                      <span>{a.name}</span>
+                      <span>{accountLabel(a)}</span>
                       <span className="pld-mono">
                         {isLiability(a.type) ? "-" : ""}
                         {formatMoney(a.balance)}
@@ -1085,6 +1202,12 @@ export default function PlaidPage() {
                 {transactions.map((t) => renderTransaction(t, "all"))}
               </section>
               </div>
+
+              {connections.canLink && (
+                <button className="pld-btn pld-btn-quiet" onClick={() => fetchLinkToken()}>
+                  Add an account ({connections.count} connected)
+                </button>
+              )}
             </>
           )}
         </div>

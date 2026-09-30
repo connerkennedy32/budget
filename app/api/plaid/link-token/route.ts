@@ -3,8 +3,9 @@ import { CountryCode, Products } from "plaid";
 import { plaidClient } from "@/lib/plaid";
 import { linkingDisabled, linkingDisabledResponse } from "@/lib/plaidLinking";
 import {
-  getPendingLinkToken,
-  getPlaidCredentials,
+  getAllPlaidCredentials,
+  getPendingLink,
+  MAX_CONNECTIONS,
   savePendingLink,
 } from "@/lib/plaidStore";
 
@@ -12,14 +13,33 @@ import {
 // bank's OAuth site sends the browser back.
 export async function GET() {
   if (linkingDisabled()) return linkingDisabledResponse();
-  return NextResponse.json({ linkToken: getPendingLinkToken() });
+  const pending = getPendingLink();
+  return NextResponse.json({
+    linkToken: pending?.linkToken ?? null,
+    // Set when this link is re-authenticating an existing connection.
+    itemId: pending?.itemId ?? null,
+  });
 }
 
-export async function POST() {
+// With { itemId }, creates a token that re-authenticates that connection
+// (Plaid "update mode": same token, no new slot). Without it, adds a bank.
+export async function POST(request: Request) {
   if (linkingDisabled()) return linkingDisabledResponse();
-  if (getPlaidCredentials()) {
+
+  const { itemId } = (await request.json().catch(() => ({}))) as {
+    itemId?: string;
+  };
+  const connections = getAllPlaidCredentials();
+
+  let accessToken: string | undefined;
+  if (itemId) {
+    accessToken = connections.find((c) => c.itemId === itemId)?.accessToken;
+    if (!accessToken) {
+      return NextResponse.json({ error: "Unknown connection." }, { status: 404 });
+    }
+  } else if (connections.length >= MAX_CONNECTIONS) {
     return NextResponse.json(
-      { error: "A bank is already connected." },
+      { error: `You already have ${connections.length} connected accounts, the limit.` },
       { status: 409 }
     );
   }
@@ -28,13 +48,15 @@ export async function POST() {
     const response = await plaidClient.linkTokenCreate({
       user: { client_user_id: "budget-app-local-user" },
       client_name: "Budget",
-      products: [Products.Transactions],
       country_codes: [CountryCode.Us],
       language: "en",
       // Required for banks that sign you in on their own site (OAuth).
       redirect_uri: process.env.PLAID_REDIRECT_URI || undefined,
+      ...(accessToken
+        ? { access_token: accessToken }
+        : { products: [Products.Transactions] }),
     });
-    savePendingLink(response.data.link_token);
+    savePendingLink(response.data.link_token, itemId);
     return NextResponse.json({ linkToken: response.data.link_token });
   } catch (err) {
     console.error(

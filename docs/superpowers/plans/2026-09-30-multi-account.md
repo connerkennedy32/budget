@@ -62,3 +62,13 @@
 - Chase may need Transactions access or OAuth registration approved in Plaid production; check the dashboard before linking.
 - Pending transactions get a new ID when they post, so a manual hide on a pending charge can be lost (already true for Wells Fargo).
 - The wife must consent and sign into her own account during the session.
+
+## Status
+
+Tasks 1-6 done and verified in Sandbox (two connections, a forced expired login, update mode through Link). Task 7 (deploy) and the live linking (8-9) remain.
+
+Notes from the Sandbox run:
+- Update mode reuses the same access token; the connection came back with no exchange and no new Item.
+- A failing connection returns `itemErrors` and the others still load. While the card side is unavailable the bank-side autopay is *not* hidden (nothing to match against), so spending briefly counts it until the card reconnects.
+- Update mode for a Sandbox "custom user" needs the original username and the JSON password; real banks use their normal login.
+- `scripts/test-card-matching.mts` and `scripts/test-plaid-store.mts` are runnable with `node --experimental-strip-types`.
