@@ -39,6 +39,7 @@ const CATEGORY_BY_NAME: Record<string, string> = {
   "google play store": SUBSCRIPTION,
   "google one": SUBSCRIPTION,
   netflix: SUBSCRIPTION,
+  xfinity: SUBSCRIPTION,
   "state farm": INSURANCE,
   apple: SUBSCRIPTION,
   spotify: SUBSCRIPTION,
