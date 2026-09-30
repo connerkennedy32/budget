@@ -27,12 +27,17 @@ const CATEGORY_BY_NAME: Record<string, string> = {
   target: "Food and drink",
   "google play store": SUBSCRIPTION,
   "google one": SUBSCRIPTION,
+  netflix: SUBSCRIPTION,
   apple: SUBSCRIPTION,
   spotify: SUBSCRIPTION,
   cursor: SUBSCRIPTION,
   anthropic: SUBSCRIPTION,
   vercel: SUBSCRIPTION,
 };
+
+// Names that begin with these, for merchants whose statement text has a
+// suffix ("Amazon Prime*AB12CD"). Kept narrow: plain "Amazon" is shopping.
+const CATEGORY_BY_PREFIX: Array<[string, string]> = [["amazon prime", SUBSCRIPTION]];
 
 // The category a merchant gets before any rule saved on a device applies.
 export const defaultCategory = (
@@ -42,6 +47,9 @@ export const defaultCategory = (
   for (const n of names) {
     const found = n ? CATEGORY_BY_NAME[n.trim().toLowerCase()] : undefined;
     if (found) return found;
+    const lower = n?.trim().toLowerCase() ?? "";
+    const byPrefix = CATEGORY_BY_PREFIX.find(([prefix]) => lower.startsWith(prefix));
+    if (byPrefix) return byPrefix[1];
   }
   return undefined;
 };
