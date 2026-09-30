@@ -22,14 +22,12 @@ export default function PlaidPage() {
   const [error, setError] = useState<string | null>(null);
 
   const checkStatus = useCallback(async () => {
-    setError(null);
     const res = await fetch("/api/plaid/status");
     const data = (await res.json()) as { linked: boolean };
     setStatus(data.linked ? "linked" : "not_linked");
   }, []);
 
   const loadTransactions = useCallback(async () => {
-    setError(null);
     const res = await fetch("/api/plaid/transactions");
     const data = (await res.json()) as
       | { transactions: Transaction[] }
@@ -42,14 +40,28 @@ export default function PlaidPage() {
   }, []);
 
   useEffect(() => {
-    checkStatus();
-  }, [checkStatus]);
+    fetch("/api/plaid/status")
+      .then((res) => res.json() as Promise<{ linked: boolean }>)
+      .then((data) => setStatus(data.linked ? "linked" : "not_linked"));
+  }, []);
 
   useEffect(() => {
-    if (status === "linked") {
-      loadTransactions();
-    }
-  }, [status, loadTransactions]);
+    if (status !== "linked") return;
+    fetch("/api/plaid/transactions")
+      .then(
+        (res) =>
+          res.json() as Promise<
+            { transactions: Transaction[] } | { error: string }
+          >
+      )
+      .then((data) => {
+        if ("error" in data) {
+          setError(data.error);
+          return;
+        }
+        setTransactions(data.transactions);
+      });
+  }, [status]);
 
   const fetchLinkToken = useCallback(async () => {
     setError(null);
@@ -101,9 +113,10 @@ export default function PlaidPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() =>
-                  status === "linked" ? loadTransactions() : checkStatus()
-                }
+                onClick={() => {
+                  setError(null);
+                  return status === "linked" ? loadTransactions() : checkStatus();
+                }}
               >
                 Retry
               </Button>
