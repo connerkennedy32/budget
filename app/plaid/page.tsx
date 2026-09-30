@@ -785,18 +785,22 @@ export default function PlaidPage() {
   }, [linkToken, ready, open]);
 
   const { totalSpent, categories } = useMemo(() => {
-    const byCategory = new Map<string, Transaction[]>();
+    // A hidden charge stays in its bucket (crossed out) but adds nothing to it.
+    const byCategory = new Map<string, { counted: Transaction[]; hidden: Transaction[] }>();
     for (const t of transactions) {
-      if (t.hidden || t.amount <= 0) continue;
-      if (NON_SPENDING.has(t.category)) continue;
-      byCategory.set(t.category, [...(byCategory.get(t.category) ?? []), t]);
+      if (t.amount <= 0 || NON_SPENDING.has(t.category)) continue;
+      const group = byCategory.get(t.category) ?? { counted: [], hidden: [] };
+      (t.hidden ? group.hidden : group.counted).push(t);
+      byCategory.set(t.category, group);
     }
     const sorted = [...byCategory.entries()]
-      .map(([name, items]) => ({
+      .map(([name, { counted, hidden }]) => ({
         name,
+        countedCount: counted.length,
+        hiddenCount: hidden.length,
         // Biggest charges first: that's what you scan a bucket for.
-        items: items.sort((a, b) => b.amount - a.amount),
-        total: items.reduce((sum, t) => sum + t.amount, 0),
+        all: [...counted, ...hidden].sort((a, b) => b.amount - a.amount),
+        total: counted.reduce((sum, t) => sum + t.amount, 0),
       }))
       .sort((a, b) => b.total - a.total);
     return {
@@ -988,7 +992,7 @@ export default function PlaidPage() {
                   <p className="pld-muted">No spending in {monthLabel(month)}.</p>
                 ) : (
                   categories.map((c) => {
-                    const pct = (c.total / totalSpent) * 100;
+                    const pct = totalSpent > 0 ? (c.total / totalSpent) * 100 : 0;
                     const expanded = openCategory === c.name;
                     return (
                       <div className="pld-cat" key={c.name}>
@@ -1003,7 +1007,11 @@ export default function PlaidPage() {
                                 {expanded ? "▾" : "▸"}
                               </span>{" "}
                               {c.name}
-                              <span className="pld-cat-count"> · {c.items.length}</span>
+                              <span className="pld-cat-count">
+                                {c.countedCount > 0 && ` · ${c.countedCount}`}
+                                {c.hiddenCount > 0 &&
+                                  `${c.countedCount > 0 ? "," : " ·"} ${c.hiddenCount} hidden`}
+                              </span>
                             </span>
                             <span className="pld-cat-amt">
                               <span className="pld-mono">{formatMoney(c.total)}</span>
@@ -1018,7 +1026,7 @@ export default function PlaidPage() {
                         </button>
                         {expanded && (
                           <div className="pld-bucket">
-                            {c.items.map((t) => renderTransaction(t, "bucket"))}
+                            {c.all.map((t) => renderTransaction(t, "bucket"))}
                           </div>
                         )}
                       </div>
