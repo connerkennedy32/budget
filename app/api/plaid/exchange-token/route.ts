@@ -26,6 +26,7 @@ export async function POST(request: Request) {
       accessToken: response.data.access_token,
       itemId: response.data.item_id,
     });
+    console.info("plaid exchange-token: saved item", response.data.item_id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("plaid exchange-token error", err);

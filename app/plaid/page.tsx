@@ -371,6 +371,20 @@ export default function PlaidPage() {
       setLinkToken(null);
       await checkStatus();
     },
+    onExit: (err, metadata) => {
+      console.info("plaid link exit", err, metadata);
+      setLinkToken(null);
+      if (err) {
+        setError(
+          err.display_message ||
+            err.error_message ||
+            "Plaid couldn't connect to your bank. Try again."
+        );
+      }
+    },
+    onEvent: (eventName, metadata) => {
+      console.info("plaid link event", eventName, metadata);
+    },
   });
 
   useEffect(() => {
