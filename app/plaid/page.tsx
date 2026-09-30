@@ -11,7 +11,14 @@ type RawTransaction = {
   category: string;
 };
 
-type Transaction = RawTransaction & { isCustom: boolean };
+type Transaction = RawTransaction & {
+  isCustom: boolean;
+  hidden: boolean;
+  manual: boolean;
+};
+
+// Entered by hand; the id is prefixed so it can't collide with a Plaid id.
+type ManualTransaction = RawTransaction;
 
 // merchant name (lowercase) -> category the user picked for it
 type CategoryRules = Record<string, string>;
@@ -34,15 +41,33 @@ const NON_SPENDING = new Set(["Income", "Transfer in", "Transfer out"]);
 
 const NEW_CATEGORY = "__new__";
 const RULES_KEY = "plaid-category-rules-v1";
+const HIDDEN_KEY = "plaid-hidden-v1";
+const MANUAL_KEY = "plaid-manual-v1";
 const ruleKey = (merchant: string) => merchant.trim().toLowerCase();
 
-const loadRules = (): CategoryRules => {
+const readStored = <T,>(key: string, fallback: T): T => {
+  if (typeof window === "undefined") return fallback;
   try {
-    return JSON.parse(localStorage.getItem(RULES_KEY) ?? "{}") as CategoryRules;
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
-    return {};
+    return fallback;
   }
 };
+
+const writeStored = (key: string, value: unknown) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage can be blocked; the change still applies until the page reloads.
+  }
+};
+
+const isoToday = () => {
+  const d = new Date();
+  return `${monthOf(d)}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 // Plaid keeps about two years of history.
 const MONTHS_BACK = 23;
 
@@ -183,6 +208,16 @@ const CSS = `
   .pld-editor-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .pld-editor-actions .pld-btn { padding: 0.6rem 1rem; font-size: 0.9rem; }
 
+  .pld-cardhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+  .pld-cardhead .pld-card-title { margin: 0; }
+  .pld-btn-small { padding: 0.5rem 0.9rem; min-height: 40px; font-size: 0.85rem; }
+  .pld-txn-hidden { opacity: 0.45; }
+  .pld-txn-hidden .pld-txn-name, .pld-txn-hidden .pld-txn-amt { text-decoration: line-through; }
+  .pld-form { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 1rem;
+    background: var(--gold-soft); border-radius: 10px; padding: 0.9rem; }
+  .pld-form label { font-size: 0.8rem; color: var(--muted); }
+  .pld-danger { color: #E8A090; border-color: rgba(192, 84, 58, 0.5); }
+
   .pld-btn {
     font: inherit; font-size: 0.95rem; font-weight: 600; cursor: pointer;
     background: var(--gold); color: #0A0806; border: 0; border-radius: 10px;
@@ -216,11 +251,15 @@ function CategoryEditor({
   txn,
   categories,
   onSave,
+  onToggleHidden,
+  onDelete,
   onCancel,
 }: {
   txn: Transaction;
   categories: string[];
   onSave: (category: string | null) => void;
+  onToggleHidden: () => void;
+  onDelete?: () => void;
   onCancel: () => void;
 }) {
   const [choice, setChoice] = useState(txn.category);
@@ -258,8 +297,9 @@ function CategoryEditor({
         />
       )}
       <p className="pld-editor-note">
-        Every {txn.name} transaction, past and future, will use this category on
-        this device.
+        {txn.manual
+          ? "This applies to this transaction only."
+          : `Every ${txn.name} transaction, past and future, will use this category on this device.`}
       </p>
       <div className="pld-editor-actions">
         <button
@@ -274,11 +314,91 @@ function CategoryEditor({
             Reset to default
           </button>
         )}
+        <button className="pld-btn pld-btn-quiet" onClick={onToggleHidden}>
+          {txn.hidden ? "Show in totals" : "Hide from totals"}
+        </button>
+        {onDelete && (
+          <button className="pld-btn pld-btn-quiet pld-danger" onClick={onDelete}>
+            Delete
+          </button>
+        )}
         <button className="pld-btn pld-btn-quiet" onClick={onCancel}>
           Cancel
         </button>
       </div>
     </div>
+  );
+}
+
+function AddTransactionForm({
+  month,
+  categories,
+  onAdd,
+  onCancel,
+}: {
+  month: string;
+  categories: string[];
+  onAdd: (txn: ManualTransaction) => void;
+  onCancel: () => void;
+}) {
+  const today = isoToday();
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today.startsWith(month) ? today : `${month}-01`);
+  const [choice, setChoice] = useState("");
+  const [custom, setCustom] = useState("");
+
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = String(new Date(y, m, 0).getDate()).padStart(2, "0");
+  const category = (choice === NEW_CATEGORY ? custom.trim() : choice).slice(0, 40);
+  const value = Number(amount);
+  const valid =
+    name.trim() !== "" && Number.isFinite(value) && value !== 0 && category !== "" && date !== "";
+
+  return (
+    <form
+      className="pld-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!valid) return;
+        onAdd({
+          id: `manual-${crypto.randomUUID()}`,
+          date,
+          name: name.trim().slice(0, 60),
+          amount: value,
+          category,
+        });
+      }}
+    >
+      <label htmlFor="add-name">Description</label>
+      <input id="add-name" className="pld-input" maxLength={60} value={name}
+        onChange={(e) => setName(e.target.value)} autoFocus />
+      <label htmlFor="add-amount">Amount</label>
+      <input id="add-amount" className="pld-input" inputMode="decimal" placeholder="0.00"
+        value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <p className="pld-editor-note">Use a negative amount for a refund or credit.</p>
+      <label htmlFor="add-date">Date</label>
+      <input id="add-date" type="date" className="pld-input" value={date}
+        min={`${month}-01`} max={`${month}-${lastDay}`}
+        onChange={(e) => setDate(e.target.value)} />
+      <label htmlFor="add-category">Category</label>
+      <select id="add-category" className="pld-input" value={choice}
+        onChange={(e) => setChoice(e.target.value)}>
+        <option value="" disabled>Choose a category</option>
+        {categories.map((c) => (
+          <option key={c} value={c}>{c}</option>
+        ))}
+        <option value={NEW_CATEGORY}>New category…</option>
+      </select>
+      {choice === NEW_CATEGORY && (
+        <input className="pld-input" placeholder="Category name" maxLength={40}
+          value={custom} onChange={(e) => setCustom(e.target.value)} />
+      )}
+      <div className="pld-editor-actions">
+        <button className="pld-btn" disabled={!valid}>Add transaction</button>
+        <button type="button" className="pld-btn pld-btn-quiet" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
   );
 }
 
@@ -291,8 +411,15 @@ export default function PlaidPage() {
   const [refresh, setRefresh] = useState(0);
   // Read once on the client. Nothing rendered before the data loads depends on it.
   const [rules, setRules] = useState<CategoryRules>(() =>
-    typeof window === "undefined" ? {} : loadRules()
+    readStored<CategoryRules>(RULES_KEY, {})
   );
+  const [hiddenIds, setHiddenIds] = useState<string[]>(() =>
+    readStored<string[]>(HIDDEN_KEY, [])
+  );
+  const [manual, setManual] = useState<ManualTransaction[]>(() =>
+    readStored<ManualTransaction[]>(MANUAL_KEY, [])
+  );
+  const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [data, setData] = useState<{
     month: string;
@@ -303,20 +430,37 @@ export default function PlaidPage() {
   const [error, setError] = useState<string | null>(null);
 
   const currentMonth = monthOf(new Date());
-  const transactions = useMemo<Transaction[]>(
-    () =>
-      (data?.transactions ?? []).map((t) => {
-        const custom = rules[ruleKey(t.name)];
-        return custom
-          ? { ...t, category: custom, isCustom: true }
-          : { ...t, isCustom: false };
-      }),
-    [data, rules]
-  );
+  const transactions = useMemo<Transaction[]>(() => {
+    const hidden = new Set(hiddenIds);
+    const fromBank = (data?.transactions ?? []).map((t) => {
+      const custom = rules[ruleKey(t.name)];
+      return {
+        ...t,
+        category: custom ?? t.category,
+        isCustom: custom !== undefined,
+        hidden: hidden.has(t.id),
+        manual: false,
+      };
+    });
+    const shownMonth = data?.month ?? month;
+    const mine = manual
+      .filter((m) => m.date.startsWith(shownMonth))
+      .map((m) => ({ ...m, isCustom: false, hidden: hidden.has(m.id), manual: true }));
+    return [...fromBank, ...mine].sort((a, b) =>
+      a.date < b.date ? 1 : a.date > b.date ? -1 : 0
+    );
+  }, [data, rules, hiddenIds, manual, month]);
   const accounts = data?.accounts ?? [];
   const categoryOptions = useMemo(
-    () => [...new Set([...(data?.categories ?? []), ...Object.values(rules)])].sort(),
-    [data, rules]
+    () =>
+      [
+        ...new Set([
+          ...(data?.categories ?? []),
+          ...Object.values(rules),
+          ...manual.map((m) => m.category),
+        ]),
+      ].sort(),
+    [data, rules, manual]
   );
 
   const saveRule = (merchant: string, category: string | null) => {
@@ -324,11 +468,29 @@ export default function PlaidPage() {
     if (category === null) delete next[ruleKey(merchant)];
     else next[ruleKey(merchant)] = category;
     setRules(next);
-    try {
-      localStorage.setItem(RULES_KEY, JSON.stringify(next));
-    } catch {
-      // Storage can be blocked; the rule still applies until the page reloads.
-    }
+    writeStored(RULES_KEY, next);
+    setOpenId(null);
+  };
+
+  const toggleHidden = (id: string) => {
+    const next = hiddenIds.includes(id)
+      ? hiddenIds.filter((h) => h !== id)
+      : [...hiddenIds, id];
+    setHiddenIds(next);
+    writeStored(HIDDEN_KEY, next);
+    setOpenId(null);
+  };
+
+  const saveManual = (next: ManualTransaction[]) => {
+    setManual(next);
+    writeStored(MANUAL_KEY, next);
+  };
+
+  const deleteManual = (id: string) => {
+    saveManual(manual.filter((m) => m.id !== id));
+    const nextHidden = hiddenIds.filter((h) => h !== id);
+    setHiddenIds(nextHidden);
+    writeStored(HIDDEN_KEY, nextHidden);
     setOpenId(null);
   };
   const loading = status === "linked" && data?.month !== month && !error;
@@ -456,7 +618,7 @@ export default function PlaidPage() {
   const { totalSpent, categories } = useMemo(() => {
     const byCategory = new Map<string, number>();
     for (const t of transactions) {
-      if (t.amount <= 0) continue;
+      if (t.hidden || t.amount <= 0) continue;
       if (NON_SPENDING.has(t.category)) continue;
       byCategory.set(t.category, (byCategory.get(t.category) ?? 0) + t.amount);
     }
@@ -596,7 +758,28 @@ export default function PlaidPage() {
               )}
 
               <section className="pld-card">
-                <h2 className="pld-card-title">Transactions</h2>
+                <div className="pld-cardhead">
+                  <h2 className="pld-card-title">Transactions</h2>
+                  {!adding && (
+                    <button
+                      className="pld-btn pld-btn-quiet pld-btn-small"
+                      onClick={() => setAdding(true)}
+                    >
+                      Add transaction
+                    </button>
+                  )}
+                </div>
+                {adding && (
+                  <AddTransactionForm
+                    month={data?.month ?? month}
+                    categories={categoryOptions}
+                    onAdd={(txn) => {
+                      saveManual([...manual, txn]);
+                      setAdding(false);
+                    }}
+                    onCancel={() => setAdding(false)}
+                  />
+                )}
                 {transactions.length === 0 && !error && (
                   <p className="pld-muted">No transactions in {monthLabel(month)}.</p>
                 )}
@@ -606,7 +789,7 @@ export default function PlaidPage() {
                   return (
                     <div className="pld-txn-row" key={t.id}>
                       <button
-                        className="pld-txn"
+                        className={`pld-txn${t.hidden ? " pld-txn-hidden" : ""}`}
                         aria-expanded={open}
                         onClick={() => setOpenId(open ? null : t.id)}
                       >
@@ -617,6 +800,8 @@ export default function PlaidPage() {
                             <span className={t.isCustom ? "pld-tag" : undefined}>
                               {t.category}
                             </span>
+                            {t.manual && " · Added by you"}
+                            {t.hidden && " · Hidden"}
                           </div>
                         </div>
                         <span
@@ -630,7 +815,17 @@ export default function PlaidPage() {
                         <CategoryEditor
                           txn={t}
                           categories={categoryOptions}
-                          onSave={(category) => saveRule(t.name, category)}
+                          onSave={(category) => {
+                            if (!t.manual) return saveRule(t.name, category);
+                            saveManual(
+                              manual.map((m) =>
+                                m.id === t.id && category ? { ...m, category } : m
+                              )
+                            );
+                            setOpenId(null);
+                          }}
+                          onToggleHidden={() => toggleHidden(t.id)}
+                          onDelete={t.manual ? () => deleteManual(t.id) : undefined}
                           onCancel={() => setOpenId(null)}
                         />
                       )}
