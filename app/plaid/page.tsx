@@ -145,6 +145,13 @@ const CSS = `
   }
   .pld-cat-amt { display: flex; gap: 0.6rem; align-items: baseline; }
   .pld-cat-pct { font-size: 0.72rem; color: var(--muted); min-width: 2.4rem; text-align: right; }
+  .pld-cat-btn { display: block; width: 100%; background: none; border: 0; padding: 0;
+    color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .pld-cat-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; border-radius: 6px; }
+  .pld-chev { color: var(--gold); display: inline-block; width: 0.9em; }
+  .pld-cat-count { color: var(--muted); font-size: 0.8rem; }
+  .pld-bucket { margin: 0.5rem 0 0.25rem 0.35rem; padding-left: 0.75rem;
+    border-left: 2px solid var(--gold-border); }
   .pld-track { height: 8px; border-radius: 4px; background: var(--gold-soft); overflow: hidden; }
   .pld-bar {
     height: 100%; border-radius: 4px; background: var(--gold);
@@ -534,6 +541,7 @@ export default function PlaidPage() {
   );
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [data, setData] = useState<{
     month: string;
     transactions: RawTransaction[];
@@ -729,14 +737,19 @@ export default function PlaidPage() {
   }, [linkToken, ready, open]);
 
   const { totalSpent, categories } = useMemo(() => {
-    const byCategory = new Map<string, number>();
+    const byCategory = new Map<string, Transaction[]>();
     for (const t of transactions) {
       if (t.hidden || t.amount <= 0) continue;
       if (NON_SPENDING.has(t.category)) continue;
-      byCategory.set(t.category, (byCategory.get(t.category) ?? 0) + t.amount);
+      byCategory.set(t.category, [...(byCategory.get(t.category) ?? []), t]);
     }
     const sorted = [...byCategory.entries()]
-      .map(([name, total]) => ({ name, total }))
+      .map(([name, items]) => ({
+        name,
+        // Biggest charges first: that's what you scan a bucket for.
+        items: items.sort((a, b) => b.amount - a.amount),
+        total: items.reduce((sum, t) => sum + t.amount, 0),
+      }))
       .sort((a, b) => b.total - a.total);
     return {
       totalSpent: sorted.reduce((sum, c) => sum + c.total, 0),
@@ -748,6 +761,59 @@ export default function PlaidPage() {
     (sum, a) => sum + (isLiability(a.type) ? -a.balance : a.balance),
     0
   );
+
+  // Rendered in the full list and inside an expanded category, so a charge
+  // can be recategorized or hidden from either place.
+  const renderTransaction = (t: Transaction, scope: string) => {
+        const credit = t.amount < 0;
+        const rowKey = `${scope}:${t.id}`;
+    const open = openId === rowKey;
+        return (
+          <div className="pld-txn-row" key={rowKey}>
+            <button
+              className={`pld-txn${t.hidden ? " pld-txn-hidden" : ""}`}
+              aria-expanded={open}
+              onClick={() => setOpenId(open ? null : rowKey)}
+            >
+              <div className="pld-txn-main">
+                <div className="pld-txn-name">{t.name}</div>
+                <div className="pld-txn-meta">
+                  {formatDate(t.date)} ·{" "}
+                  <span className={t.isCustom ? "pld-tag" : undefined}>
+                    {t.category}
+                  </span>
+                  {t.manual && " · Added by you"}
+                  {t.hidden && " · Hidden"}
+                </div>
+              </div>
+              <span
+                className={`pld-mono pld-txn-amt${credit ? " pld-credit" : ""}`}
+              >
+                {credit ? "+" : ""}
+                {formatMoney(Math.abs(t.amount))}
+              </span>
+            </button>
+            {open && (
+              <CategoryEditor
+                txn={t}
+                categories={categoryOptions}
+                onSave={(category) => {
+                  if (!t.manual) return saveRule(t.name, category);
+                  saveManual(
+                    manual.map((m) =>
+                      m.id === t.id && category ? { ...m, category } : m
+                    )
+                  );
+                  setOpenId(null);
+                }}
+                onToggleHidden={() => toggleHidden(t.id)}
+                onDelete={t.manual ? () => deleteManual(t.id) : undefined}
+                onCancel={() => setOpenId(null)}
+              />
+            )}
+          </div>
+        );
+  };
 
   return (
     <>
@@ -829,20 +895,38 @@ export default function PlaidPage() {
                 ) : (
                   categories.map((c) => {
                     const pct = (c.total / totalSpent) * 100;
+                    const expanded = openCategory === c.name;
                     return (
                       <div className="pld-cat" key={c.name}>
-                        <div className="pld-cat-head">
-                          <span>{c.name}</span>
-                          <span className="pld-cat-amt">
-                            <span className="pld-mono">{formatMoney(c.total)}</span>
-                            <span className="pld-mono pld-cat-pct">
-                              {Math.round(pct)}%
+                        <button
+                          className="pld-cat-btn"
+                          aria-expanded={expanded}
+                          onClick={() => setOpenCategory(expanded ? null : c.name)}
+                        >
+                          <div className="pld-cat-head">
+                            <span>
+                              <span className="pld-chev" aria-hidden>
+                                {expanded ? "▾" : "▸"}
+                              </span>{" "}
+                              {c.name}
+                              <span className="pld-cat-count"> · {c.items.length}</span>
                             </span>
-                          </span>
-                        </div>
-                        <div className="pld-track">
-                          <div className="pld-bar" style={{ width: `${pct}%` }} />
-                        </div>
+                            <span className="pld-cat-amt">
+                              <span className="pld-mono">{formatMoney(c.total)}</span>
+                              <span className="pld-mono pld-cat-pct">
+                                {Math.round(pct)}%
+                              </span>
+                            </span>
+                          </div>
+                          <div className="pld-track">
+                            <div className="pld-bar" style={{ width: `${pct}%` }} />
+                          </div>
+                        </button>
+                        {expanded && (
+                          <div className="pld-bucket">
+                            {c.items.map((t) => renderTransaction(t, "bucket"))}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -893,55 +977,7 @@ export default function PlaidPage() {
                 {transactions.length === 0 && !error && (
                   <p className="pld-muted">No transactions in {monthLabel(month)}.</p>
                 )}
-                {transactions.map((t) => {
-                  const credit = t.amount < 0;
-                  const open = openId === t.id;
-                  return (
-                    <div className="pld-txn-row" key={t.id}>
-                      <button
-                        className={`pld-txn${t.hidden ? " pld-txn-hidden" : ""}`}
-                        aria-expanded={open}
-                        onClick={() => setOpenId(open ? null : t.id)}
-                      >
-                        <div className="pld-txn-main">
-                          <div className="pld-txn-name">{t.name}</div>
-                          <div className="pld-txn-meta">
-                            {formatDate(t.date)} ·{" "}
-                            <span className={t.isCustom ? "pld-tag" : undefined}>
-                              {t.category}
-                            </span>
-                            {t.manual && " · Added by you"}
-                            {t.hidden && " · Hidden"}
-                          </div>
-                        </div>
-                        <span
-                          className={`pld-mono pld-txn-amt${credit ? " pld-credit" : ""}`}
-                        >
-                          {credit ? "+" : ""}
-                          {formatMoney(Math.abs(t.amount))}
-                        </span>
-                      </button>
-                      {open && (
-                        <CategoryEditor
-                          txn={t}
-                          categories={categoryOptions}
-                          onSave={(category) => {
-                            if (!t.manual) return saveRule(t.name, category);
-                            saveManual(
-                              manual.map((m) =>
-                                m.id === t.id && category ? { ...m, category } : m
-                              )
-                            );
-                            setOpenId(null);
-                          }}
-                          onToggleHidden={() => toggleHidden(t.id)}
-                          onDelete={t.manual ? () => deleteManual(t.id) : undefined}
-                          onCancel={() => setOpenId(null)}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
+                {transactions.map((t) => renderTransaction(t, "all"))}
               </section>
               </div>
             </>
