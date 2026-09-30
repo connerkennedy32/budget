@@ -26,6 +26,7 @@ const CATEGORY_BY_NAME: Record<string, string> = {
   costco: "Food and drink",
   target: "Food and drink",
   "google play store": SUBSCRIPTION,
+  "google one": SUBSCRIPTION,
   apple: SUBSCRIPTION,
   spotify: SUBSCRIPTION,
   cursor: SUBSCRIPTION,
