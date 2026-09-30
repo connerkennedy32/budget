@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
 type RawTransaction = {
@@ -200,6 +200,8 @@ const CSS = `
   .pld-txn-row:last-child .pld-txn { padding-bottom: 0.75rem; }
   .pld-txn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 6px; }
   .pld-tag { color: var(--gold); }
+  .pld-catlabel { text-decoration: underline dotted; text-underline-offset: 3px; }
+  .pld-catlabel:hover { color: var(--gold); }
   .pld-editor {
     background: var(--gold-soft); border-radius: 10px; padding: 0.9rem;
     margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem;
@@ -270,16 +272,30 @@ function CategoryEditor({
   onToggleHidden,
   onDelete,
   onCancel,
+  pickerToken,
 }: {
   txn: Transaction;
   categories: string[];
   onSave: (category: string | null) => void;
+  // Changes each time the category label is tapped, to open the picker.
+  pickerToken: number;
   onToggleHidden: () => void;
   onDelete?: () => void;
   onCancel: () => void;
 }) {
   const [choice, setChoice] = useState(txn.category);
   const [custom, setCustom] = useState("");
+  const selectRef = useRef<HTMLSelectElement>(null);
+
+  useEffect(() => {
+    if (!pickerToken) return;
+    const el = selectRef.current;
+    el?.focus();
+    try {
+      // Not every browser can open a select from code; focus is the fallback.
+      el?.showPicker();
+    } catch {}
+  }, [pickerToken]);
 
   const options = categories.includes(txn.category)
     ? categories
@@ -291,6 +307,7 @@ function CategoryEditor({
       <label htmlFor={`cat-${txn.id}`}>Category for {txn.name}</label>
       <select
         id={`cat-${txn.id}`}
+        ref={selectRef}
         className="pld-input"
         value={choice}
         onChange={(e) => setChoice(e.target.value)}
@@ -542,6 +559,7 @@ export default function PlaidPage() {
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [openCategory, setOpenCategory] = useState<string | null>(null);
+  const [picker, setPicker] = useState<{ key: string; n: number } | null>(null);
   const [data, setData] = useState<{
     month: string;
     transactions: RawTransaction[];
@@ -773,13 +791,25 @@ export default function PlaidPage() {
             <button
               className={`pld-txn${t.hidden ? " pld-txn-hidden" : ""}`}
               aria-expanded={open}
-              onClick={() => setOpenId(open ? null : rowKey)}
+              onClick={(e) => {
+          // Tapping the category label goes straight to the category picker.
+          if ((e.target as HTMLElement).closest("[data-category]")) {
+            setOpenId(rowKey);
+            setPicker((p) => ({ key: rowKey, n: (p?.n ?? 0) + 1 }));
+            return;
+          }
+          setPicker(null);
+          setOpenId(open ? null : rowKey);
+        }}
             >
               <div className="pld-txn-main">
                 <div className="pld-txn-name">{t.name}</div>
                 <div className="pld-txn-meta">
                   {formatDate(t.date)} ·{" "}
-                  <span className={t.isCustom ? "pld-tag" : undefined}>
+                  <span
+                className={`pld-catlabel${t.isCustom ? " pld-tag" : ""}`}
+                data-category
+              >
                     {t.category}
                   </span>
                   {t.manual && " · Added by you"}
@@ -796,6 +826,7 @@ export default function PlaidPage() {
             {open && (
               <CategoryEditor
                 txn={t}
+                pickerToken={picker?.key === rowKey ? picker.n : 0}
                 categories={categoryOptions}
                 onSave={(category) => {
                   if (!t.manual) return saveRule(t.name, category);
