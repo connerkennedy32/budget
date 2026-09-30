@@ -783,6 +783,28 @@ export default function PlaidPage() {
     };
   }, [transactions]);
 
+  // Everything the spending total leaves out, each transaction counted once.
+  const notCounted = useMemo(() => {
+    const groups = [
+      { key: "hidden", one: "hidden", many: "hidden", count: 0, total: 0 },
+      { key: "transfer", one: "transfer", many: "transfers", count: 0, total: 0 },
+      { key: "income", one: "income deposit", many: "income deposits", count: 0, total: 0 },
+      { key: "refund", one: "refund", many: "refunds", count: 0, total: 0 },
+    ];
+    const add = (key: string, t: Transaction) => {
+      const g = groups.find((x) => x.key === key)!;
+      g.count += 1;
+      g.total += Math.abs(t.amount);
+    };
+    for (const t of transactions) {
+      if (t.hidden) add("hidden", t);
+      else if (t.category === "Transfer in" || t.category === "Transfer out") add("transfer", t);
+      else if (t.category === "Income") add("income", t);
+      else if (t.amount < 0) add("refund", t);
+    }
+    return groups.filter((g) => g.count > 0);
+  }, [transactions]);
+
   const totalBalance = accounts.reduce(
     (sum, a) => sum + (isLiability(a.type) ? -a.balance : a.balance),
     0
@@ -919,6 +941,17 @@ export default function PlaidPage() {
                   {month === currentMonth ? "Spent so far this month" : "Spent this month"}
                 </h1>
                 <p className="pld-spent pld-serif">{formatMoney(totalSpent)}</p>
+                {notCounted.length > 0 && (
+                  <p className="pld-hero-sub">
+                    Not counted:{" "}
+                    {notCounted
+                      .map(
+                        (g) =>
+                          `${g.count} ${g.count === 1 ? g.one : g.many} (${formatMoney(g.total)})`
+                      )
+                      .join(", ")}
+                  </p>
+                )}
                 {accounts.length > 0 && (
                   <p className="pld-hero-sub">
                     Current balance{" "}
