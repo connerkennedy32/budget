@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { AccountBase, Transaction } from "plaid";
 import { plaidClient } from "@/lib/plaid";
-import { getCategoryRules, getPlaidCredentials, ruleKey } from "@/lib/plaidStore";
+import { getPlaidCredentials } from "@/lib/plaidStore";
 
 const PLAID_CATEGORIES = [
   "BANK_FEES",
@@ -71,25 +71,17 @@ export async function GET(request: Request) {
       plaidTransactions.push(...response.data.transactions);
     }
 
-    const rules = getCategoryRules();
     const transactions = plaidTransactions
-      .map((t) => {
-        const name = t.merchant_name ?? t.name;
-        const custom = rules[ruleKey(name)];
-        return {
-          id: t.transaction_id,
-          date: t.date,
-          name,
-          amount: t.amount,
-          category: custom ?? formatCategory(t.personal_finance_category?.primary ?? null),
-          isCustom: custom !== undefined,
-        };
-      })
+      .map((t) => ({
+        id: t.transaction_id,
+        date: t.date,
+        name: t.merchant_name ?? t.name,
+        amount: t.amount,
+        category: formatCategory(t.personal_finance_category?.primary ?? null),
+      }))
       .sort((a, b) => (a.date < b.date ? 1 : -1));
 
-    const categories = [
-      ...new Set([...PLAID_CATEGORIES.map(formatCategory), ...Object.values(rules)]),
-    ].sort();
+    const categories = PLAID_CATEGORIES.map(formatCategory).sort();
 
     return NextResponse.json({
       transactions,

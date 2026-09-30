@@ -1,4 +1,4 @@
-const CACHE_NAME = "budget-v1";
+const CACHE_NAME = "budget-v2";
 const STATIC_ASSETS = ["/", "/budget", "/savings", "/take-home", "/affordability"];
 
 self.addEventListener("install", (event) => {
@@ -19,6 +19,8 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Bank data and sign-in must always come from the server, never a cache.
+  if (new URL(event.request.url).pathname.startsWith("/api/")) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {

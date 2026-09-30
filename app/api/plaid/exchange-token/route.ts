@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
-import { getPlaidCredentials, savePlaidCredentials } from "@/lib/plaidStore";
+import { linkingDisabled, linkingDisabledResponse } from "@/lib/plaidLinking";
+import {
+  clearPendingLink,
+  getPlaidCredentials,
+  savePlaidCredentials,
+} from "@/lib/plaidStore";
 
 export async function POST(request: Request) {
+  if (linkingDisabled()) return linkingDisabledResponse();
   if (getPlaidCredentials()) {
     return NextResponse.json(
       { error: "A bank is already connected." },
@@ -26,6 +32,7 @@ export async function POST(request: Request) {
       accessToken: response.data.access_token,
       itemId: response.data.item_id,
     });
+    clearPendingLink();
     console.info("plaid exchange-token: saved item", response.data.item_id);
     return NextResponse.json({ ok: true });
   } catch (err) {

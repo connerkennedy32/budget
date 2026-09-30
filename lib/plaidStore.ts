@@ -10,6 +10,13 @@ export type PlaidCredentials = {
 };
 
 export function getPlaidCredentials(): PlaidCredentials | null {
+  // A deployed copy can't write files, so its token comes from the environment.
+  if (process.env.PLAID_ACCESS_TOKEN) {
+    return {
+      accessToken: process.env.PLAID_ACCESS_TOKEN,
+      itemId: process.env.PLAID_ITEM_ID ?? "env",
+    };
+  }
   if (!fs.existsSync(STORE_FILE)) {
     return null;
   }
@@ -24,31 +31,33 @@ export function savePlaidCredentials(creds: PlaidCredentials): void {
   fs.writeFileSync(STORE_FILE, JSON.stringify(creds, null, 2), "utf-8");
 }
 
-const RULES_FILE = path.join(STORE_DIR, "rules.json");
+const PENDING_FILE = path.join(STORE_DIR, "pending-link.json");
 
-// merchant key -> category the user assigned to it
-export type CategoryRules = Record<string, string>;
+// Plaid link tokens expire after 4 hours; stop offering them a little sooner.
+const PENDING_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
-export const ruleKey = (merchant: string) => merchant.trim().toLowerCase();
+type PendingLink = { linkToken: string; createdAt: number };
 
-export function getCategoryRules(): CategoryRules {
-  if (!fs.existsSync(RULES_FILE)) {
-    return {};
-  }
-  return JSON.parse(fs.readFileSync(RULES_FILE, "utf-8")) as CategoryRules;
-}
-
-// A null category removes the rule.
-export function setCategoryRule(merchant: string, category: string | null): void {
-  const rules = getCategoryRules();
-  const key = ruleKey(merchant);
-  if (category === null) {
-    delete rules[key];
-  } else {
-    rules[key] = category;
-  }
+export function savePendingLink(linkToken: string): void {
   if (!fs.existsSync(STORE_DIR)) {
     fs.mkdirSync(STORE_DIR, { recursive: true });
   }
-  fs.writeFileSync(RULES_FILE, JSON.stringify(rules, null, 2), "utf-8");
+  const pending: PendingLink = { linkToken, createdAt: Date.now() };
+  fs.writeFileSync(PENDING_FILE, JSON.stringify(pending), "utf-8");
+}
+
+export function getPendingLinkToken(): string | null {
+  if (!fs.existsSync(PENDING_FILE)) {
+    return null;
+  }
+  const pending = JSON.parse(fs.readFileSync(PENDING_FILE, "utf-8")) as PendingLink;
+  return Date.now() - pending.createdAt < PENDING_MAX_AGE_MS
+    ? pending.linkToken
+    : null;
+}
+
+export function clearPendingLink(): void {
+  if (fs.existsSync(PENDING_FILE)) {
+    fs.rmSync(PENDING_FILE);
+  }
 }

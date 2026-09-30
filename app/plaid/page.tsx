@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
-type Transaction = {
+type RawTransaction = {
   id: string;
   date: string;
   name: string;
   amount: number;
   category: string;
-  isCustom: boolean;
 };
+
+type Transaction = RawTransaction & { isCustom: boolean };
+
+// merchant name (lowercase) -> category the user picked for it
+type CategoryRules = Record<string, string>;
 
 type Account = {
   id: string;
@@ -20,7 +24,7 @@ type Account = {
 };
 
 type TransactionsResponse =
-  | { transactions: Transaction[]; accounts: Account[]; categories: string[] }
+  | { transactions: RawTransaction[]; accounts: Account[]; categories: string[] }
   | { error: string };
 
 type Status = "loading" | "not_linked" | "linked";
@@ -29,6 +33,16 @@ type Status = "loading" | "not_linked" | "linked";
 const NON_SPENDING = new Set(["Income", "Transfer in", "Transfer out"]);
 
 const NEW_CATEGORY = "__new__";
+const RULES_KEY = "plaid-category-rules-v1";
+const ruleKey = (merchant: string) => merchant.trim().toLowerCase();
+
+const loadRules = (): CategoryRules => {
+  try {
+    return JSON.parse(localStorage.getItem(RULES_KEY) ?? "{}") as CategoryRules;
+  } catch {
+    return {};
+  }
+};
 // Plaid keeps about two years of history.
 const MONTHS_BACK = 23;
 
@@ -201,37 +215,21 @@ const CSS = `
 function CategoryEditor({
   txn,
   categories,
-  onDone,
+  onSave,
+  onCancel,
 }: {
   txn: Transaction;
   categories: string[];
-  onDone: (saved: boolean) => void;
+  onSave: (category: string | null) => void;
+  onCancel: () => void;
 }) {
   const [choice, setChoice] = useState(txn.category);
   const [custom, setCustom] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const options = categories.includes(txn.category)
     ? categories
     : [...categories, txn.category].sort();
-  const finalCategory = choice === NEW_CATEGORY ? custom.trim() : choice;
-
-  const save = async (category: string | null) => {
-    setSaving(true);
-    setError(null);
-    const res = await fetch("/api/plaid/category-rule", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ merchant: txn.name, category }),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      setError("Couldn't save that category. Try again.");
-      return;
-    }
-    onDone(true);
-  };
+  const finalCategory = (choice === NEW_CATEGORY ? custom.trim() : choice).slice(0, 40);
 
   return (
     <div className="pld-editor">
@@ -260,27 +258,23 @@ function CategoryEditor({
         />
       )}
       <p className="pld-editor-note">
-        Every {txn.name} transaction, past and future, will use this category.
+        Every {txn.name} transaction, past and future, will use this category on
+        this device.
       </p>
-      {error && <p className="pld-editor-note" role="alert" style={{ color: "#E8A090" }}>{error}</p>}
       <div className="pld-editor-actions">
         <button
           className="pld-btn"
-          disabled={saving || !finalCategory}
-          onClick={() => save(finalCategory)}
+          disabled={!finalCategory}
+          onClick={() => onSave(finalCategory)}
         >
           Save
         </button>
         {txn.isCustom && (
-          <button
-            className="pld-btn pld-btn-quiet"
-            disabled={saving}
-            onClick={() => save(null)}
-          >
+          <button className="pld-btn pld-btn-quiet" onClick={() => onSave(null)}>
             Reset to default
           </button>
         )}
-        <button className="pld-btn pld-btn-quiet" onClick={() => onDone(false)}>
+        <button className="pld-btn pld-btn-quiet" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -291,21 +285,52 @@ function CategoryEditor({
 export default function PlaidPage() {
   const [status, setStatus] = useState<Status>("loading");
   const [linkToken, setLinkToken] = useState<string | null>(null);
+  // Set when the bank's OAuth site sends the browser back to this page.
+  const [receivedRedirectUri, setReceivedRedirectUri] = useState<string | undefined>();
   const [month, setMonth] = useState(() => monthOf(new Date()));
   const [refresh, setRefresh] = useState(0);
+  // Read once on the client. Nothing rendered before the data loads depends on it.
+  const [rules, setRules] = useState<CategoryRules>(() =>
+    typeof window === "undefined" ? {} : loadRules()
+  );
   const [openId, setOpenId] = useState<string | null>(null);
   const [data, setData] = useState<{
     month: string;
-    transactions: Transaction[];
+    transactions: RawTransaction[];
     accounts: Account[];
     categories: string[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const currentMonth = monthOf(new Date());
-  const transactions = useMemo(() => data?.transactions ?? [], [data]);
+  const transactions = useMemo<Transaction[]>(
+    () =>
+      (data?.transactions ?? []).map((t) => {
+        const custom = rules[ruleKey(t.name)];
+        return custom
+          ? { ...t, category: custom, isCustom: true }
+          : { ...t, isCustom: false };
+      }),
+    [data, rules]
+  );
   const accounts = data?.accounts ?? [];
-  const categoryOptions = data?.categories ?? [];
+  const categoryOptions = useMemo(
+    () => [...new Set([...(data?.categories ?? []), ...Object.values(rules)])].sort(),
+    [data, rules]
+  );
+
+  const saveRule = (merchant: string, category: string | null) => {
+    const next = { ...rules };
+    if (category === null) delete next[ruleKey(merchant)];
+    else next[ruleKey(merchant)] = category;
+    setRules(next);
+    try {
+      localStorage.setItem(RULES_KEY, JSON.stringify(next));
+    } catch {
+      // Storage can be blocked; the rule still applies until the page reloads.
+    }
+    setOpenId(null);
+  };
   const loading = status === "linked" && data?.month !== month && !error;
 
   const checkStatus = useCallback(async () => {
@@ -355,8 +380,16 @@ export default function PlaidPage() {
     setLinkToken(data.linkToken);
   }, []);
 
+  // Ask the server whether a sign-in finished that the browser never reported.
+  const recover = useCallback(async () => {
+    const res = await fetch("/api/plaid/recover", { method: "POST" });
+    const data = (await res.json()) as { recovered?: boolean };
+    if (data.recovered) await checkStatus();
+  }, [checkStatus]);
+
   const { open, ready } = usePlaidLink({
     token: linkToken,
+    receivedRedirectUri,
     onSuccess: async (publicToken) => {
       const res = await fetch("/api/plaid/exchange-token", {
         method: "POST",
@@ -369,11 +402,16 @@ export default function PlaidPage() {
         return;
       }
       setLinkToken(null);
+      setReceivedRedirectUri(undefined);
+      window.history.replaceState(null, "", "/plaid");
       await checkStatus();
     },
     onExit: (err, metadata) => {
       console.info("plaid link exit", err, metadata);
       setLinkToken(null);
+      setReceivedRedirectUri(undefined);
+      window.history.replaceState(null, "", "/plaid");
+      recover();
       if (err) {
         setError(
           err.display_message ||
@@ -386,6 +424,28 @@ export default function PlaidPage() {
       console.info("plaid link event", eventName, metadata);
     },
   });
+
+  // Coming back from a bank's own sign-in page: resume the same Link session.
+  // Otherwise, finish any sign-in the browser lost track of.
+  useEffect(() => {
+    if (status !== "not_linked") return;
+    if (window.location.search.includes("oauth_state_id")) {
+      fetch("/api/plaid/link-token")
+        .then((res) => res.json() as Promise<{ linkToken: string | null }>)
+        .then((json) => {
+          if (json.linkToken) {
+            setReceivedRedirectUri(window.location.href);
+            setLinkToken(json.linkToken);
+          }
+        });
+      return;
+    }
+    fetch("/api/plaid/recover", { method: "POST" })
+      .then((res) => res.json() as Promise<{ recovered?: boolean }>)
+      .then((json) => {
+        if (json.recovered) setStatus("linked");
+      });
+  }, [status]);
 
   useEffect(() => {
     if (linkToken && ready) {
@@ -570,10 +630,8 @@ export default function PlaidPage() {
                         <CategoryEditor
                           txn={t}
                           categories={categoryOptions}
-                          onDone={(saved) => {
-                            setOpenId(null);
-                            if (saved) setRefresh((n) => n + 1);
-                          }}
+                          onSave={(category) => saveRule(t.name, category)}
+                          onCancel={() => setOpenId(null)}
                         />
                       )}
                     </div>

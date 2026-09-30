@@ -74,6 +74,7 @@ const TABS = [
 
 export function TabNav() {
   const pathname = usePathname();
+  if (pathname === "/login") return null;
   return (
       <nav className="ldg-tabnav">
         {TABS.map((tab) => {
