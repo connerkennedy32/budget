@@ -45,6 +45,17 @@ const HIDDEN_KEY = "plaid-hidden-v1";
 const MANUAL_KEY = "plaid-manual-v1";
 const ruleKey = (merchant: string) => merchant.trim().toLowerCase();
 
+// The page can load from the service worker's cache after the login has
+// expired, so a 401 means "sign in again", not "no bank linked".
+const apiFetch = async (url: string, init?: RequestInit) => {
+  const res = await fetch(url, init);
+  if (res.status === 401) {
+    window.location.assign("/login?next=/plaid");
+    return new Promise<never>(() => {});
+  }
+  return res;
+};
+
 const readStored = <T,>(key: string, fallback: T): T => {
   if (typeof window === "undefined") return fallback;
   try {
@@ -643,13 +654,13 @@ export default function PlaidPage() {
   const loading = status === "linked" && data?.month !== month && !error;
 
   const checkStatus = useCallback(async () => {
-    const res = await fetch("/api/plaid/status");
+    const res = await apiFetch("/api/plaid/status");
     const data = (await res.json()) as { linked: boolean };
     setStatus(data.linked ? "linked" : "not_linked");
   }, []);
 
   useEffect(() => {
-    fetch("/api/plaid/status")
+    apiFetch("/api/plaid/status")
       .then((res) => res.json() as Promise<{ linked: boolean }>)
       .then((data) => setStatus(data.linked ? "linked" : "not_linked"));
   }, []);
@@ -657,7 +668,7 @@ export default function PlaidPage() {
   useEffect(() => {
     if (status !== "linked") return;
     let stale = false;
-    fetch(`/api/plaid/transactions?month=${month}`)
+    apiFetch(`/api/plaid/transactions?month=${month}`)
       .then((res) => res.json() as Promise<TransactionsResponse>)
       .then((json) => {
         if (stale) return;
