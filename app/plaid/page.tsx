@@ -37,8 +37,9 @@ type TransactionsResponse =
 
 type Status = "loading" | "not_linked" | "linked";
 
-// Money moving between your own accounts, or coming in, isn't spending.
-const NON_SPENDING = new Set(["Income", "Transfer in", "Transfer out"]);
+// Money moving between your own accounts, or coming in, isn't spending, and
+// tithing is set aside from the budget rather than spent out of it.
+const NON_SPENDING = new Set(["Income", "Transfer in", "Transfer out", "Tithing"]);
 
 const NEW_CATEGORY = "__new__";
 const RULES_KEY = "plaid-category-rules-v1";
@@ -815,6 +816,7 @@ export default function PlaidPage() {
       { key: "hidden", one: "hidden", many: "hidden", count: 0, total: 0 },
       { key: "transfer", one: "transfer", many: "transfers", count: 0, total: 0 },
       { key: "income", one: "income deposit", many: "income deposits", count: 0, total: 0 },
+      { key: "tithing", one: "tithing payment", many: "tithing payments", count: 0, total: 0 },
       { key: "refund", one: "refund", many: "refunds", count: 0, total: 0 },
     ];
     const add = (key: string, t: Transaction) => {
@@ -826,6 +828,7 @@ export default function PlaidPage() {
       if (t.hidden) add("hidden", t);
       else if (t.category === "Transfer in" || t.category === "Transfer out") add("transfer", t);
       else if (t.category === "Income") add("income", t);
+      else if (t.category === "Tithing") add("tithing", t);
       else if (t.amount < 0) add("refund", t);
     }
     return groups.filter((g) => g.count > 0);
