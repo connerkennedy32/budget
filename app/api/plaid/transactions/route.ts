@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import type { AccountBase, Transaction } from "plaid";
 import { plaidClient } from "@/lib/plaid";
-import { defaultCategory, EXTRA, normalizeCategory, TITHING } from "@/lib/plaidCategories";
+import {
+  defaultCategory,
+  EXTRA,
+  normalizeCategory,
+  SUBSCRIPTION,
+  TITHING,
+} from "@/lib/plaidCategories";
 import { getPlaidCredentials } from "@/lib/plaidStore";
 
 const PLAID_CATEGORIES = [
@@ -79,7 +85,12 @@ export async function GET(request: Request) {
       }))
       .sort((a, b) => (a.date < b.date ? 1 : -1));
 
-    const categories = [...PLAID_CATEGORIES.map(formatCategory), EXTRA, TITHING].sort();
+    const categories = [
+      ...PLAID_CATEGORIES.map(formatCategory),
+      EXTRA,
+      SUBSCRIPTION,
+      TITHING,
+    ].sort();
 
     return NextResponse.json({
       transactions,

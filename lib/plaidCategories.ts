@@ -9,6 +9,7 @@ const MERGED_INTO_EXTRA = new Set([
 
 export const EXTRA = "Extra";
 export const TITHING = "Tithing";
+export const SUBSCRIPTION = "Subscription";
 
 // Applies to Plaid's categories and to anything typed or saved by hand, so
 // "entertainment" typed into the picker also lands in Extra.
@@ -24,6 +25,12 @@ const CATEGORY_BY_NAME: Record<string, string> = {
   "american fork": "Rent and utilities",
   costco: "Food and drink",
   target: "Food and drink",
+  "google play store": SUBSCRIPTION,
+  apple: SUBSCRIPTION,
+  spotify: SUBSCRIPTION,
+  cursor: SUBSCRIPTION,
+  anthropic: SUBSCRIPTION,
+  vercel: SUBSCRIPTION,
 };
 
 // The category a merchant gets before any rule saved on a device applies.
