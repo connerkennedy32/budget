@@ -46,6 +46,7 @@ type TransactionsResponse =
       accounts: Account[];
       categories: string[];
       itemErrors: ItemError[];
+      duplicateAccounts?: number;
     }
   | { error: string; itemErrors?: ItemError[] };
 
@@ -618,6 +619,7 @@ export default function PlaidPage() {
     transactions: RawTransaction[];
     accounts: Account[];
     categories: string[];
+    duplicateAccounts?: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -626,8 +628,16 @@ export default function PlaidPage() {
   // A filter for an account that's no longer listed falls back to "All".
   const activeFilter = accounts.some((a) => a.id === accountFilter) ? accountFilter : "all";
   const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
-  const accountLabel = (a: Account) =>
-    `${a.name.length > 22 ? `${a.name.slice(0, 21)}…` : a.name}${a.mask ? ` ···${a.mask}` : ""}`;
+  // Plaid's names can end in "...6954" (the digits are shown separately) and
+  // contain broken characters where a ® was.
+  const accountLabel = (a: Account) => {
+    const name = a.name
+      .replace(/\uFFFD+/g, "")
+      .replace(/\s*\.{3}\d+\s*$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return `${name.length > 28 ? `${name.slice(0, 27)}…` : name}${a.mask ? ` ···${a.mask}` : ""}`;
+  };
   const transactions = useMemo<Transaction[]>(() => {
     const hidden = new Set(hiddenIds);
     const shown = new Set(shownIds);
@@ -1172,6 +1182,11 @@ export default function PlaidPage() {
                       <span>Total</span>
                       <span className="pld-mono">{formatMoney(totalBalance)}</span>
                     </div>
+                  )}
+                  {(data?.duplicateAccounts ?? 0) > 0 && (
+                    <p className="pld-editor-note" style={{ marginTop: "0.6rem" }}>
+                      An account linked through two logins is shown once.
+                    </p>
                   )}
                 </section>
               )}

@@ -72,3 +72,9 @@ Notes from the Sandbox run:
 - A failing connection returns `itemErrors` and the others still load. While the card side is unavailable the bank-side autopay is *not* hidden (nothing to match against), so spending briefly counts it until the card reconnects.
 - Update mode for a Sandbox "custom user" needs the original username and the JSON password; real banks use their normal login.
 - `scripts/test-card-matching.mts` and `scripts/test-plaid-store.mts` are runnable with `node --experimental-strip-types`.
+
+## Live linking notes
+
+- Chase card and the wife's Wells Fargo login were linked on 2026-09-30.
+- The wife's login also contained the joint Everyday Checking account, so it arrived twice (two logins, different transaction ids, copies synced at different times). `lib/plaidDedupe.ts` keeps the earlier connection's copy; `scripts/test-dedupe.mts` covers it. Keeping the earlier copy keeps already-hidden transaction ids valid.
+- Matching worked on real data: every Chase autopay and every "Online Transfer ... to Wells Fargo" line paired with a payment on the card side (July-September).

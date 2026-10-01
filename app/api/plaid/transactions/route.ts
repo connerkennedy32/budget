@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { AccountBase, Transaction } from "plaid";
 import { plaidClient } from "@/lib/plaid";
 import { matchCardPayments } from "@/lib/plaidCardMatching";
+import { duplicateAccountIds } from "@/lib/plaidDedupe";
 import {
   defaultCategory,
   EXTRA,
@@ -46,6 +47,7 @@ const plaidErrorCode = (err: unknown) =>
 
 type ItemResult = {
   itemId: string;
+  institutionId: string | null;
   accounts: AccountBase[];
   transactions: Transaction[];
 };
@@ -57,6 +59,7 @@ async function fetchItem(
 ): Promise<ItemResult> {
   const transactions: Transaction[] = [];
   let accounts: AccountBase[] = [];
+  let institutionId: string | null = null;
   let total = Infinity;
   while (transactions.length < total) {
     const response = await plaidClient.transactionsGet({
@@ -67,10 +70,11 @@ async function fetchItem(
     });
     total = response.data.total_transactions;
     accounts = response.data.accounts;
+    institutionId = response.data.item.institution_id ?? null;
     if (response.data.transactions.length === 0) break;
     transactions.push(...response.data.transactions);
   }
-  return { itemId: creds.itemId, accounts, transactions };
+  return { itemId: creds.itemId, institutionId, accounts, transactions };
 }
 
 export async function GET(request: Request) {
@@ -136,8 +140,14 @@ export async function GET(request: Request) {
     );
   }
 
+  // A joint account linked through two logins arrives twice; keep the copy from
+  // the earlier connection.
+  const duplicates = duplicateAccountIds(results);
+
   const accounts = results.flatMap((r) =>
-    r.accounts.map((a) => ({
+    r.accounts
+      .filter((a) => !duplicates.has(a.account_id))
+      .map((a) => ({
       id: a.account_id,
       name: a.name,
       mask: a.mask ?? null,
@@ -148,7 +158,9 @@ export async function GET(request: Request) {
     }))
   );
 
-  const raw = results.flatMap((r) => r.transactions);
+  const raw = results
+    .flatMap((r) => r.transactions)
+    .filter((t) => !duplicates.has(t.account_id));
   const matches = matchCardPayments(
     raw.map((t) => ({
       id: t.transaction_id,
@@ -194,5 +206,11 @@ export async function GET(request: Request) {
     TITHING,
   ].sort();
 
-  return NextResponse.json({ transactions, categories, accounts, itemErrors });
+  return NextResponse.json({
+    transactions,
+    categories,
+    accounts,
+    itemErrors,
+    duplicateAccounts: duplicates.size,
+  });
 }
