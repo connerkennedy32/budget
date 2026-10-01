@@ -140,8 +140,8 @@ export async function GET(request: Request) {
     );
   }
 
-  // A joint account linked through two logins arrives twice; keep the copy from
-  // the earlier connection.
+  // A joint account linked through two logins arrives twice; keep the copy
+  // from the most recently added connection.
   const duplicates = duplicateAccountIds(results);
 
   const accounts = results.flatMap((r) =>

@@ -12,13 +12,13 @@ export type DedupeInput = {
   }>;
 };
 
-// Returns the ids of accounts that duplicate one already seen on an earlier
-// connection. The earlier connection's copy is the one kept, which also keeps
-// transaction ids you've already hidden valid.
+// Returns the ids of accounts that duplicate another copy of the same account.
+// The most recently added connection's copy is the one kept.
 export function duplicateAccountIds(items: DedupeInput[]): Set<string> {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
-  for (const item of items) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
     const thisItem = new Set<string>();
     for (const a of item.accounts) {
       // Without an institution or last digits there's nothing safe to compare.
