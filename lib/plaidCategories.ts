@@ -28,6 +28,10 @@ const MERGED_INTO: Record<string, string> = {
   "bank fees": EXTRA,
   "loan payments": HOUSING,
   "rent and utilities": HOUSING,
+  // Now subcategories of Extra ("Parent > Child").
+  "home improvement": "Extra > Home improvement",
+  travel: "Extra > Travel",
+  medical: "Extra > Medical",
 };
 
 // Applies to Plaid's categories and to anything typed or saved by hand, so

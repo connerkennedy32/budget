@@ -1474,7 +1474,9 @@ export default function PlaidPage() {
                               renderMerchants(c.merchants, c.name)
                             ) : (
                               c.subs.map((sub) => {
-                                const subOpen = openCategories.includes(sub.name);
+                                // Prefixed so "Other" (named after its parent) has its own open state.
+                                const subKey = `sub:${sub.name}`;
+                                const subOpen = openCategories.includes(subKey);
                                 return (
                                   <div className="pld-sub" key={sub.name}>
                                     <button
@@ -1483,8 +1485,8 @@ export default function PlaidPage() {
                                       onClick={() =>
                                         setOpenCategories(
                                           subOpen
-                                            ? openCategories.filter((n) => n !== sub.name)
-                                            : [...openCategories, sub.name]
+                                            ? openCategories.filter((n) => n !== subKey)
+                                            : [...openCategories, subKey]
                                         )
                                       }
                                     >

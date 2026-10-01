@@ -183,13 +183,15 @@ export async function GET(request: Request) {
       // The card's side of a payment is money moving, not a refund.
       const category = matches.cardSideIds.has(t.transaction_id)
         ? "Transfer in"
-        : (defaultCategory(t.merchant_name, t.name) ??
-          (plaidPrimary === "LOAN_PAYMENTS" && isCardPaymentOrTransfer(t.merchant_name, t.name)
-            ? EXTRA
-            : plaidPrimary === "FOOD_AND_DRINK"
-              ? (foodSubcategory(t.personal_finance_category?.detailed) ??
-                normalizeCategory(formatCategory(plaidPrimary)))
-              : normalizeCategory(formatCategory(plaidPrimary))));
+        : normalizeCategory(
+            defaultCategory(t.merchant_name, t.name) ??
+              (plaidPrimary === "LOAN_PAYMENTS" && isCardPaymentOrTransfer(t.merchant_name, t.name)
+                ? EXTRA
+                : plaidPrimary === "FOOD_AND_DRINK"
+                  ? (foodSubcategory(t.personal_finance_category?.detailed) ??
+                    formatCategory(plaidPrimary))
+                  : formatCategory(plaidPrimary))
+          );
       return {
         id: t.transaction_id,
         date: t.date,
@@ -212,7 +214,10 @@ export async function GET(request: Request) {
     INSURANCE,
     SUBSCRIPTION,
     TITHING,
-  ].sort();
+  ]
+    .map(normalizeCategory)
+    .filter((c, i, all) => all.indexOf(c) === i)
+    .sort();
 
   return NextResponse.json({
     transactions,
