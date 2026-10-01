@@ -66,6 +66,43 @@ const SHOWN_KEY = "plaid-shown-v1";
 const MANUAL_KEY = "plaid-manual-v1";
 const ruleKey = (merchant: string) => merchant.trim().toLowerCase();
 
+// Applies the choices saved on this device (category rules, hidden charges) to
+// one month of bank transactions plus any manual entries from that month.
+const resolveTransactions = (
+  raw: RawTransaction[],
+  manual: ManualTransaction[],
+  month: string,
+  rules: CategoryRules,
+  hiddenIds: string[],
+  shownIds: string[]
+): Transaction[] => {
+  const hidden = new Set(hiddenIds);
+  const shown = new Set(shownIds);
+  const isHidden = (t: RawTransaction) =>
+    shown.has(t.id) ? false : hidden.has(t.id) || t.defaultHidden === true;
+  const fromBank = raw.map((t) => {
+    const stored = rules[ruleKey(t.name)];
+    const custom = stored === undefined ? undefined : normalizeCategory(stored);
+    return {
+      ...t,
+      category: custom ?? t.category,
+      isCustom: custom !== undefined,
+      hidden: isHidden(t),
+      manual: false,
+    };
+  });
+  const mine = manual
+    .filter((m) => m.date.startsWith(month))
+    .map((m) => ({
+      ...m,
+      category: normalizeCategory(m.category),
+      isCustom: false,
+      hidden: hidden.has(m.id),
+      manual: true,
+    }));
+  return [...fromBank, ...mine];
+};
+
 // The page can load from the service worker's cache after the login has
 // expired, so a 401 means "sign in again", not "no bank linked".
 const apiFetch = async (url: string, init?: RequestInit) => {
@@ -253,6 +290,13 @@ const CSS = `
   .pld-cardhead .pld-card-title { margin: 0; }
   .pld-btn-small { padding: 0.5rem 0.9rem; min-height: 40px; font-size: 0.85rem; }
   .pld-filter { margin-bottom: 1rem; }
+  .pld-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.7rem; }
+  .pld-chip {
+    font: inherit; font-size: 0.85rem; color: var(--text); background: transparent;
+    border: 1px solid var(--gold-border); border-radius: 999px;
+    padding: 0.4rem 0.8rem; min-height: 36px; cursor: pointer;
+  }
+  .pld-chip-on { background: var(--gold-soft); border-color: var(--gold); font-weight: 600; }
   .pld-txn-hidden { opacity: 0.45; }
   .pld-txn-hidden .pld-txn-name, .pld-txn-hidden .pld-txn-amt { text-decoration: line-through; }
   .pld-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;
@@ -602,6 +646,11 @@ export default function PlaidPage() {
   );
   const [accountFilter, setAccountFilter] = useState("all");
   const [search, setSearch] = useState("");
+  // Months picked for the averages card, and each one's bank transactions
+  // (fetched when first picked; keys carry the refresh count so a refresh refetches).
+  const [avgMonths, setAvgMonths] = useState<string[]>([]);
+  const [monthCache, setMonthCache] = useState<Record<string, RawTransaction[]>>({});
+  const [avgError, setAvgError] = useState<string | null>(null);
   const [itemErrors, setItemErrors] = useState<ItemError[]>([]);
   const [connections, setConnections] = useState({ count: 0, canLink: false });
   // Set while Link is re-authenticating an existing connection rather than
@@ -614,6 +663,7 @@ export default function PlaidPage() {
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [openCategories, setOpenCategories] = useState<string[]>([]);
+  const [openMerchants, setOpenMerchants] = useState<string[]>([]);
   const [picker, setPicker] = useState<{ key: string; n: number } | null>(null);
   const [data, setData] = useState<{
     month: string;
@@ -640,33 +690,16 @@ export default function PlaidPage() {
     return `${name.length > 28 ? `${name.slice(0, 27)}…` : name}${a.mask ? ` ···${a.mask}` : ""}`;
   };
   const transactions = useMemo<Transaction[]>(() => {
-    const hidden = new Set(hiddenIds);
-    const shown = new Set(shownIds);
-    const isHidden = (t: RawTransaction) =>
-      shown.has(t.id) ? false : hidden.has(t.id) || t.defaultHidden === true;
-    const fromBank = (data?.transactions ?? []).map((t) => {
-      const stored = rules[ruleKey(t.name)];
-      const custom = stored === undefined ? undefined : normalizeCategory(stored);
-      return {
-        ...t,
-        category: custom ?? t.category,
-        isCustom: custom !== undefined,
-        hidden: isHidden(t),
-        manual: false,
-      };
-    });
-    const shownMonth = data?.month ?? month;
-    const mine = manual
-      .filter((m) => m.date.startsWith(shownMonth))
-      .map((m) => ({
-        ...m,
-        category: normalizeCategory(m.category),
-        isCustom: false,
-        hidden: hidden.has(m.id),
-        manual: true,
-      }));
+    const all = resolveTransactions(
+      data?.transactions ?? [],
+      manual,
+      data?.month ?? month,
+      rules,
+      hiddenIds,
+      shownIds
+    );
     // Manual entries belong to no account, so they only show under "All".
-    const everything = activeFilter === "all" ? [...fromBank, ...mine] : fromBank.filter((t) => t.accountId === activeFilter);
+    const everything = activeFilter === "all" ? all : all.filter((t) => t.accountId === activeFilter);
     return everything.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }, [data, rules, hiddenIds, shownIds, manual, month, activeFilter]);
   // Logged once per page load so the choices made on this device can be pasted
@@ -781,6 +814,32 @@ export default function PlaidPage() {
       stale = true;
     };
   }, [status, month, refresh]);
+
+  useEffect(() => {
+    if (status !== "linked") return;
+    const missing = avgMonths.filter((m) => !monthCache[`${refresh}:${m}`]);
+    if (missing.length === 0) return;
+    let stale = false;
+    Promise.all(
+      missing.map(async (m) => {
+        const res = await apiFetch(`/api/plaid/transactions?month=${m}`);
+        const json = (await res.json()) as TransactionsResponse;
+        if ("error" in json) throw new Error(json.error);
+        return [`${refresh}:${m}`, json.transactions] as const;
+      })
+    )
+      .then((entries) => {
+        if (stale) return;
+        setAvgError(null);
+        setMonthCache((c) => ({ ...c, ...Object.fromEntries(entries) }));
+      })
+      .catch((e: unknown) => {
+        if (!stale) setAvgError(e instanceof Error ? e.message : "Couldn't load those months.");
+      });
+    return () => {
+      stale = true;
+    };
+  }, [status, avgMonths, monthCache, refresh]);
 
   // With an itemId, re-authenticates that connection (no new Plaid slot).
   const fetchLinkToken = useCallback(async (itemId?: string) => {
@@ -899,22 +958,46 @@ export default function PlaidPage() {
 
   const { totalSpent, categories } = useMemo(() => {
     // A hidden charge stays in its bucket (crossed out) but adds nothing to it.
-    const byCategory = new Map<string, { counted: Transaction[]; hidden: Transaction[] }>();
+    // Credits (refunds) net against the charges, and charges from the same
+    // merchant collapse into one line that expands to the individual ones.
+    type Merchant = {
+      key: string;
+      name: string;
+      items: Transaction[];
+      total: number;
+      counted: number;
+    };
+    const byCategory = new Map<string, Map<string, Merchant>>();
     for (const t of transactions) {
-      if (t.amount <= 0 || NON_SPENDING.has(t.category)) continue;
-      const group = byCategory.get(t.category) ?? { counted: [], hidden: [] };
-      (t.hidden ? group.hidden : group.counted).push(t);
-      byCategory.set(t.category, group);
+      if (NON_SPENDING.has(t.category)) continue;
+      const merchants = byCategory.get(t.category) ?? new Map<string, Merchant>();
+      const key = ruleKey(t.name);
+      const m = merchants.get(key) ?? { key, name: t.name, items: [], total: 0, counted: 0 };
+      m.items.push(t);
+      if (!t.hidden) {
+        m.total += t.amount;
+        m.counted += 1;
+      }
+      merchants.set(key, m);
+      byCategory.set(t.category, merchants);
     }
     const sorted = [...byCategory.entries()]
-      .map(([name, { counted, hidden }]) => ({
-        name,
-        countedCount: counted.length,
-        hiddenCount: hidden.length,
-        // Biggest charges first: that's what you scan a bucket for.
-        all: [...counted, ...hidden].sort((a, b) => b.amount - a.amount),
-        total: counted.reduce((sum, t) => sum + t.amount, 0),
-      }))
+      .map(([name, merchants]) => {
+        const list = [...merchants.values()]
+          .map((m) => ({
+            ...m,
+            // Biggest charges first: that's what you scan a merchant for.
+            items: m.items.sort((a, b) => b.amount - a.amount),
+          }))
+          .sort((a, b) => b.total - a.total);
+        return {
+          name,
+          merchants: list,
+          countedCount: list.reduce((sum, m) => sum + m.counted, 0),
+          hiddenCount: list.reduce((sum, m) => sum + m.items.length - m.counted, 0),
+          total: list.reduce((sum, m) => sum + m.total, 0),
+        };
+      })
       .sort((a, b) => b.total - a.total);
     return {
       totalSpent: sorted.reduce((sum, c) => sum + c.total, 0),
@@ -929,7 +1012,6 @@ export default function PlaidPage() {
       { key: "transfer", one: "transfer", many: "transfers", count: 0, total: 0 },
       { key: "income", one: "income deposit", many: "income deposits", count: 0, total: 0 },
       { key: "tithing", one: "tithing payment", many: "tithing payments", count: 0, total: 0 },
-      { key: "refund", one: "refund", many: "refunds", count: 0, total: 0 },
     ];
     const add = (key: string, t: Transaction) => {
       const g = groups.find((x) => x.key === key)!;
@@ -941,10 +1023,30 @@ export default function PlaidPage() {
       else if (t.category === "Transfer in" || t.category === "Transfer out") add("transfer", t);
       else if (t.category === "Income") add("income", t);
       else if (t.category === "Tithing") add("tithing", t);
-      else if (t.amount < 0) add("refund", t);
     }
     return groups.filter((g) => g.count > 0);
   }, [transactions]);
+
+  // Per-category spending averaged over the picked months. A month with no
+  // spending in a category counts as zero, so the numbers are "per month".
+  const averages = useMemo(() => {
+    const loaded = avgMonths.filter((m) => monthCache[`${refresh}:${m}`]);
+    if (loaded.length === 0) return null;
+    const totals = new Map<string, number>();
+    for (const m of loaded) {
+      const all = resolveTransactions(monthCache[`${refresh}:${m}`], manual, m, rules, hiddenIds, shownIds);
+      for (const t of all) {
+        if (t.hidden || NON_SPENDING.has(t.category)) continue;
+        if (activeFilter !== "all" && t.accountId !== activeFilter) continue;
+        totals.set(t.category, (totals.get(t.category) ?? 0) + t.amount);
+      }
+    }
+    const rows = [...totals.entries()]
+      .map(([name, sum]) => ({ name, avg: sum / loaded.length }))
+      .sort((a, b) => b.avg - a.avg);
+    return { rows, total: rows.reduce((sum, r) => sum + r.avg, 0), count: loaded.length };
+  }, [avgMonths, monthCache, refresh, manual, rules, hiddenIds, shownIds, activeFilter]);
+  const avgLoading = avgMonths.some((m) => !monthCache[`${refresh}:${m}`]) && !avgError;
 
   // Charges whose name contains the search text, for "how much at Costco".
   // Hidden ones are listed (crossed out) but add nothing; refunds net out.
@@ -1227,12 +1329,130 @@ export default function PlaidPage() {
                         </button>
                         {expanded && (
                           <div className="pld-bucket">
-                            {c.all.map((t) => renderTransaction(t, "bucket"))}
+                            {c.merchants.map((m) => {
+                              if (m.items.length === 1) return renderTransaction(m.items[0], "bucket");
+                              const mKey = `${c.name}:${m.key}`;
+                              const mOpen = openMerchants.includes(mKey);
+                              return (
+                                <div key={mKey}>
+                                  <button
+                                    className="pld-txn"
+                                    aria-expanded={mOpen}
+                                    onClick={() =>
+                                      setOpenMerchants(
+                                        mOpen
+                                          ? openMerchants.filter((x) => x !== mKey)
+                                          : [...openMerchants, mKey]
+                                      )
+                                    }
+                                  >
+                                    <div className="pld-txn-main">
+                                      <div className="pld-txn-name">
+                                        <span className="pld-chev" aria-hidden>
+                                          {mOpen ? "▾" : "▸"}
+                                        </span>{" "}
+                                        {m.name}
+                                      </div>
+                                      <div className="pld-txn-meta">
+                                        {m.items.length} transactions
+                                      </div>
+                                    </div>
+                                    <span className="pld-mono pld-txn-amt">
+                                      {formatMoney(m.total)}
+                                    </span>
+                                  </button>
+                                  {mOpen && m.items.map((t) => renderTransaction(t, "bucket"))}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
                     );
                   })
+                )}
+              </section>
+
+              <section className="pld-card">
+                <h2 className="pld-card-title">Monthly averages</h2>
+                <p className="pld-muted" style={{ marginTop: 0 }}>
+                  Pick months to see what you spend per month in each category.
+                </p>
+                <div className="pld-chips">
+                  {Array.from({ length: 12 }, (_, i) => shiftMonth(currentMonth, -i)).map((m) => {
+                    const on = avgMonths.includes(m);
+                    return (
+                      <button
+                        key={m}
+                        className={`pld-chip${on ? " pld-chip-on" : ""}`}
+                        aria-pressed={on}
+                        onClick={() =>
+                          setAvgMonths(on ? avgMonths.filter((x) => x !== m) : [...avgMonths, m])
+                        }
+                      >
+                        {new Date(Number(m.slice(0, 4)), Number(m.slice(5)) - 1, 1).toLocaleDateString(
+                          "en-US",
+                          { month: "short", year: "2-digit" }
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="pld-chips">
+                  {[3, 6, 12].map((n) => (
+                    <button
+                      key={n}
+                      className="pld-btn pld-btn-quiet pld-btn-small"
+                      onClick={() =>
+                        setAvgMonths(Array.from({ length: n }, (_, i) => shiftMonth(currentMonth, -(i + 1))))
+                      }
+                    >
+                      Last {n} full months
+                    </button>
+                  ))}
+                  {avgMonths.length > 0 && (
+                    <button
+                      className="pld-btn pld-btn-quiet pld-btn-small"
+                      onClick={() => setAvgMonths([])}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {avgError && <p className="pld-muted">{avgError}</p>}
+                {avgLoading && <p className="pld-muted">Loading months…</p>}
+                {avgMonths.includes(currentMonth) && (
+                  <p className="pld-editor-note">
+                    This month isn’t over, so it pulls the averages down.
+                  </p>
+                )}
+                {averages && (
+                  <div style={{ marginTop: "0.9rem" }}>
+                    <p className="pld-title">
+                      Average per month over {averages.count}{" "}
+                      {averages.count === 1 ? "month" : "months"}
+                    </p>
+                    <p className="pld-spent pld-serif" style={{ fontSize: "2rem" }}>
+                      {formatMoney(averages.total)}
+                    </p>
+                    {averages.rows.map((r) => {
+                      const pct = averages.total > 0 ? (r.avg / averages.total) * 100 : 0;
+                      return (
+                        <div className="pld-cat" key={r.name}>
+                          <div className="pld-cat-head">
+                            <span>{r.name}</span>
+                            <span className="pld-cat-amt">
+                              <span className="pld-mono">{formatMoney(r.avg)}</span>
+                              <span className="pld-mono pld-cat-pct">{Math.round(pct)}%</span>
+                            </span>
+                          </div>
+                          <div className="pld-track">
+                            <div className="pld-bar" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </section>
 
