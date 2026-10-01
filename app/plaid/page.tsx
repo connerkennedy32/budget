@@ -601,6 +601,7 @@ export default function PlaidPage() {
     readStored<string[]>(SHOWN_KEY, [])
   );
   const [accountFilter, setAccountFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const [itemErrors, setItemErrors] = useState<ItemError[]>([]);
   const [connections, setConnections] = useState({ count: 0, canLink: false });
   // Set while Link is re-authenticating an existing connection rather than
@@ -612,7 +613,7 @@ export default function PlaidPage() {
   );
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [openCategory, setOpenCategory] = useState<string | null>(null);
+  const [openCategories, setOpenCategories] = useState<string[]>([]);
   const [picker, setPicker] = useState<{ key: string; n: number } | null>(null);
   const [data, setData] = useState<{
     month: string;
@@ -668,6 +669,28 @@ export default function PlaidPage() {
     const everything = activeFilter === "all" ? [...fromBank, ...mine] : fromBank.filter((t) => t.accountId === activeFilter);
     return everything.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }, [data, rules, hiddenIds, shownIds, manual, month, activeFilter]);
+  // Logged once per page load so the choices made on this device can be pasted
+  // somewhere and turned into rules in code. Hidden/shown charges are listed
+  // with their name, date and amount, since the bare ids mean nothing.
+  const configLogged = useRef(false);
+  useEffect(() => {
+    if (!data || configLogged.current) return;
+    configLogged.current = true;
+    const describe = (ids: string[]) =>
+      ids.map((id) => {
+        const t = data.transactions.find((x) => x.id === id) ?? manual.find((x) => x.id === id);
+        return t ? { id, name: t.name, date: t.date, amount: t.amount } : { id };
+      });
+    console.log(
+      "Plaid custom config:\n" +
+        JSON.stringify(
+          { rules, hidden: describe(hiddenIds), shown: describe(shownIds), manual },
+          null,
+          2
+        )
+    );
+  }, [data, rules, hiddenIds, shownIds, manual]);
+
   const categoryOptions = useMemo(
     () =>
       [
@@ -923,6 +946,18 @@ export default function PlaidPage() {
     return groups.filter((g) => g.count > 0);
   }, [transactions]);
 
+  // Charges whose name contains the search text, for "how much at Costco".
+  // Hidden ones are listed (crossed out) but add nothing; refunds net out.
+  const searchResults = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    const matches = transactions.filter((t) => t.name.toLowerCase().includes(q));
+    return {
+      matches,
+      total: matches.reduce((sum, t) => sum + (t.hidden ? 0 : t.amount), 0),
+    };
+  }, [transactions, search]);
+
   const totalBalance = accounts.reduce(
     (sum, a) => sum + (isLiability(a.type) ? -a.balance : a.balance),
     0
@@ -1091,6 +1126,36 @@ export default function PlaidPage() {
                 </select>
               )}
 
+              <input
+                className="pld-input pld-filter"
+                type="search"
+                aria-label="Search transactions"
+                placeholder="Search this month, e.g. Costco"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {searchResults && (
+                <section className="pld-card">
+                  <h2 className="pld-card-title">
+                    “{search.trim()}” in {monthLabel(month)}
+                  </h2>
+                  {searchResults.matches.length === 0 ? (
+                    <p className="pld-muted">No matching transactions.</p>
+                  ) : (
+                    <>
+                      <p className="pld-spent pld-serif" style={{ fontSize: "2rem" }}>
+                        {formatMoney(searchResults.total)}
+                      </p>
+                      <p className="pld-muted">
+                        {searchResults.matches.length}{" "}
+                        {searchResults.matches.length === 1 ? "transaction" : "transactions"}
+                      </p>
+                      {searchResults.matches.map((t) => renderTransaction(t, "search"))}
+                    </>
+                  )}
+                </section>
+              )}
+
               <div className={loading ? "pld-loading" : undefined} aria-busy={loading}>
               <header className="pld-hero">
                 <h1 className="pld-title">
@@ -1123,13 +1188,19 @@ export default function PlaidPage() {
                 ) : (
                   categories.map((c) => {
                     const pct = totalSpent > 0 ? (c.total / totalSpent) * 100 : 0;
-                    const expanded = openCategory === c.name;
+                    const expanded = openCategories.includes(c.name);
                     return (
                       <div className="pld-cat" key={c.name}>
                         <button
                           className="pld-cat-btn"
                           aria-expanded={expanded}
-                          onClick={() => setOpenCategory(expanded ? null : c.name)}
+                          onClick={() =>
+                            setOpenCategories(
+                              expanded
+                                ? openCategories.filter((n) => n !== c.name)
+                                : [...openCategories, c.name]
+                            )
+                          }
                         >
                           <div className="pld-cat-head">
                             <span>
@@ -1164,32 +1235,6 @@ export default function PlaidPage() {
                   })
                 )}
               </section>
-
-              {accounts.length > 0 && (
-                <section className="pld-card">
-                  <h2 className="pld-card-title">Accounts</h2>
-                  {accounts.map((a) => (
-                    <div className="pld-acct" key={a.id}>
-                      <span>{accountLabel(a)}</span>
-                      <span className="pld-mono">
-                        {isLiability(a.type) ? "-" : ""}
-                        {formatMoney(a.balance)}
-                      </span>
-                    </div>
-                  ))}
-                  {accounts.length > 1 && (
-                    <div className="pld-acct pld-acct-total">
-                      <span>Total</span>
-                      <span className="pld-mono">{formatMoney(totalBalance)}</span>
-                    </div>
-                  )}
-                  {(data?.duplicateAccounts ?? 0) > 0 && (
-                    <p className="pld-editor-note" style={{ marginTop: "0.6rem" }}>
-                      An account linked through two logins is shown once.
-                    </p>
-                  )}
-                </section>
-              )}
 
               <section className="pld-card">
                 <div className="pld-cardhead">
