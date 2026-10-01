@@ -246,6 +246,10 @@ const CSS = `
   .pld-txn-name { font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pld-txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
   .pld-txn-amt { font-size: 0.9rem; white-space: nowrap; }
+  .pld-txn-amt-group { display: flex; align-items: center; gap: 0.4rem; }
+  .pld-txn-amt-group .pld-chev { width: 0.9em; text-align: center; }
+  .pld-merchant-items { margin: 0 0 0.6rem 0.5rem; padding-left: 0.75rem;
+    border-left: 2px solid var(--gold-border); }
   .pld-credit { color: var(--green); }
 
   .pld-monthnav {
@@ -1334,7 +1338,7 @@ export default function PlaidPage() {
                               const mKey = `${c.name}:${m.key}`;
                               const mOpen = openMerchants.includes(mKey);
                               return (
-                                <div key={mKey}>
+                                <div className="pld-txn-row" key={mKey}>
                                   <button
                                     className="pld-txn"
                                     aria-expanded={mOpen}
@@ -1347,21 +1351,25 @@ export default function PlaidPage() {
                                     }
                                   >
                                     <div className="pld-txn-main">
-                                      <div className="pld-txn-name">
-                                        <span className="pld-chev" aria-hidden>
-                                          {mOpen ? "▾" : "▸"}
-                                        </span>{" "}
-                                        {m.name}
-                                      </div>
+                                      <div className="pld-txn-name">{m.name}</div>
                                       <div className="pld-txn-meta">
                                         {m.items.length} transactions
                                       </div>
                                     </div>
-                                    <span className="pld-mono pld-txn-amt">
-                                      {formatMoney(m.total)}
+                                    <span className="pld-txn-amt-group">
+                                      <span className="pld-mono pld-txn-amt">
+                                        {formatMoney(m.total)}
+                                      </span>
+                                      <span className="pld-chev" aria-hidden>
+                                        {mOpen ? "▾" : "▸"}
+                                      </span>
                                     </span>
                                   </button>
-                                  {mOpen && m.items.map((t) => renderTransaction(t, "bucket"))}
+                                  {mOpen && (
+                                    <div className="pld-merchant-items">
+                                      {m.items.map((t) => renderTransaction(t, "bucket"))}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
