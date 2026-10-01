@@ -54,7 +54,12 @@ export async function POST(request: Request) {
       redirect_uri: process.env.PLAID_REDIRECT_URI || undefined,
       ...(accessToken
         ? { access_token: accessToken }
-        : { products: [Products.Transactions] }),
+        : {
+            products: [Products.Transactions],
+            // Plaid fetches 90 days unless asked for more, and the amount is
+            // fixed when the bank is linked. 730 days is the most it allows.
+            transactions: { days_requested: 730 },
+          }),
     });
     savePendingLink(response.data.link_token, itemId);
     return NextResponse.json({ linkToken: response.data.link_token });
