@@ -5,7 +5,10 @@ import { matchCardPayments } from "@/lib/plaidCardMatching";
 import { duplicateAccountIds } from "@/lib/plaidDedupe";
 import {
   defaultCategory,
+  EATING_OUT,
   EXTRA,
+  foodSubcategory,
+  GROCERIES,
   HOUSING,
   INSURANCE,
   isCardPaymentOrTransfer,
@@ -183,7 +186,10 @@ export async function GET(request: Request) {
         : (defaultCategory(t.merchant_name, t.name) ??
           (plaidPrimary === "LOAN_PAYMENTS" && isCardPaymentOrTransfer(t.merchant_name, t.name)
             ? EXTRA
-            : normalizeCategory(formatCategory(plaidPrimary))));
+            : plaidPrimary === "FOOD_AND_DRINK"
+              ? (foodSubcategory(t.personal_finance_category?.detailed) ??
+                normalizeCategory(formatCategory(plaidPrimary)))
+              : normalizeCategory(formatCategory(plaidPrimary))));
       return {
         id: t.transaction_id,
         date: t.date,
@@ -200,6 +206,8 @@ export async function GET(request: Request) {
   const categories = [
     ...PLAID_CATEGORIES.map(formatCategory),
     EXTRA,
+    GROCERIES,
+    EATING_OUT,
     HOUSING,
     INSURANCE,
     SUBSCRIPTION,

@@ -22,6 +22,22 @@ type Transaction = RawTransaction & {
   manual: boolean;
 };
 
+// Charges from one merchant within a category, with refunds netted in.
+type MerchantGroup = {
+  key: string;
+  name: string;
+  items: Transaction[];
+  total: number;
+  counted: number;
+};
+
+// A subcategory is written "Parent > Child", e.g. "Food and drink > Groceries".
+const SUB_SEPARATOR = " > ";
+const splitCategory = (name: string): [string, string | null] => {
+  const i = name.indexOf(SUB_SEPARATOR);
+  return i === -1 ? [name, null] : [name.slice(0, i), name.slice(i + SUB_SEPARATOR.length)];
+};
+
 // Entered by hand; the id is prefixed so it can't collide with a Plaid id.
 type ManualTransaction = RawTransaction;
 
@@ -294,6 +310,22 @@ const CSS = `
   .pld-cardhead .pld-card-title { margin: 0; }
   .pld-btn-small { padding: 0.5rem 0.9rem; min-height: 40px; font-size: 0.85rem; }
   .pld-filter { margin-bottom: 1rem; }
+  .pld-sub { border-bottom: 1px solid var(--border); }
+  .pld-sub:last-child { border-bottom: 0; }
+  .pld-sub-btn {
+    display: flex; justify-content: space-between; align-items: center; width: 100%;
+    background: none; border: 0; color: inherit; font: inherit; font-size: 0.95rem;
+    padding: 0.7rem 0; cursor: pointer; text-align: left;
+  }
+  .pld-txn-selected { background: var(--gold-soft); box-shadow: -3px 0 0 var(--gold); }
+  .pld-selbar {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: max(1rem, env(safe-area-inset-bottom)); z-index: 50;
+    display: flex; align-items: center; gap: 1rem;
+    background: var(--bg); color: var(--text); border: 1px solid var(--gold);
+    border-radius: 999px; padding: 0.5rem 0.6rem 0.5rem 1.1rem;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); font-size: 0.9rem;
+  }
   .pld-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.7rem; }
   .pld-chip {
     font: inherit; font-size: 0.85rem; color: var(--text); background: transparent;
@@ -668,6 +700,10 @@ export default function PlaidPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [openCategories, setOpenCategories] = useState<string[]>([]);
   const [openMerchants, setOpenMerchants] = useState<string[]>([]);
+  // Rows picked for a running total (shift/cmd/ctrl-click, or any tap once
+  // something is picked). The anchor is where a shift-click range starts.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState<{ scope: string; id: string } | null>(null);
   const [picker, setPicker] = useState<{ key: string; n: number } | null>(null);
   const [data, setData] = useState<{
     month: string;
@@ -964,13 +1000,7 @@ export default function PlaidPage() {
     // A hidden charge stays in its bucket (crossed out) but adds nothing to it.
     // Credits (refunds) net against the charges, and charges from the same
     // merchant collapse into one line that expands to the individual ones.
-    type Merchant = {
-      key: string;
-      name: string;
-      items: Transaction[];
-      total: number;
-      counted: number;
-    };
+    type Merchant = MerchantGroup;
     const byCategory = new Map<string, Map<string, Merchant>>();
     for (const t of transactions) {
       if (NON_SPENDING.has(t.category)) continue;
@@ -1003,9 +1033,31 @@ export default function PlaidPage() {
         };
       })
       .sort((a, b) => b.total - a.total);
+    // Subcategories roll up into their parent. A parent that only has charges of
+    // its own (no subcategories) is shown as before.
+    const parents = new Map<string, typeof sorted>();
+    for (const c of sorted) {
+      const parent = splitCategory(c.name)[0];
+      parents.set(parent, [...(parents.get(parent) ?? []), c]);
+    }
+    const groups = [...parents.entries()]
+      .map(([name, entries]) => {
+        const plain = entries.length === 1 && splitCategory(entries[0].name)[1] === null;
+        return {
+          name,
+          total: entries.reduce((sum, c) => sum + c.total, 0),
+          countedCount: entries.reduce((sum, c) => sum + c.countedCount, 0),
+          hiddenCount: entries.reduce((sum, c) => sum + c.hiddenCount, 0),
+          merchants: plain ? entries[0].merchants : [],
+          subs: plain
+            ? []
+            : entries.map((c) => ({ ...c, label: splitCategory(c.name)[1] ?? "Other" })),
+        };
+      })
+      .sort((a, b) => b.total - a.total);
     return {
       totalSpent: sorted.reduce((sum, c) => sum + c.total, 0),
-      categories: sorted,
+      categories: groups,
     };
   }, [transactions]);
 
@@ -1071,16 +1123,101 @@ export default function PlaidPage() {
 
   // Rendered in the full list and inside an expanded category, so a charge
   // can be recategorized or hidden from either place.
+  const renderMerchants = (merchants: MerchantGroup[], catKey: string) => (
+    <>
+      {merchants.map((m) => {
+                              if (m.items.length === 1) return renderTransaction(m.items[0], "bucket");
+                              const mKey = `${catKey}:${m.key}`;
+                              const mOpen = openMerchants.includes(mKey);
+                              return (
+                                <div className="pld-txn-row" key={mKey}>
+                                  <button
+                                    className="pld-txn"
+                                    aria-expanded={mOpen}
+                                    onClick={() =>
+                                      setOpenMerchants(
+                                        mOpen
+                                          ? openMerchants.filter((x) => x !== mKey)
+                                          : [...openMerchants, mKey]
+                                      )
+                                    }
+                                  >
+                                    <div className="pld-txn-main">
+                                      <div className="pld-txn-name">{m.name}</div>
+                                      <div className="pld-txn-meta">
+                                        {m.items.length} transactions
+                                      </div>
+                                    </div>
+                                    <span className="pld-txn-amt-group">
+                                      <span className="pld-mono pld-txn-amt">
+                                        {formatMoney(m.total)}
+                                      </span>
+                                      <span className="pld-chev" aria-hidden>
+                                        {mOpen ? "▾" : "▸"}
+                                      </span>
+                                    </span>
+                                  </button>
+                                  {mOpen && (
+                                    <div className="pld-merchant-items">
+                                      {m.items.map((t) => renderTransaction(t, "bucket"))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+    </>
+  );
+
+  const selection = useMemo(() => {
+    const ids = new Set(selectedIds);
+    const picked = transactions.filter((t) => ids.has(t.id));
+    return { ids, count: picked.length, total: picked.reduce((sum, t) => sum + t.amount, 0) };
+  }, [selectedIds, transactions]);
+
+  const toggleSelected = (id: string) =>
+    setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+
+  // A shift-click picks every visible row of this list between the anchor and
+  // the clicked row, in the order they appear on screen.
+  const selectRange = (scope: string, id: string) => {
+    const rows = [...document.querySelectorAll<HTMLElement>(`[data-scope="${scope}"]`)];
+    const ids = rows.map((r) => r.dataset.txnId as string);
+    const from = anchor?.scope === scope ? ids.indexOf(anchor.id) : -1;
+    const to = ids.indexOf(id);
+    if (from === -1 || to === -1) {
+      toggleSelected(id);
+    } else {
+      const [lo, hi] = from < to ? [from, to] : [to, from];
+      setSelectedIds((cur) => [...new Set([...cur, ...ids.slice(lo, hi + 1)])]);
+    }
+    setAnchor({ scope, id });
+  };
+
   const renderTransaction = (t: Transaction, scope: string) => {
         const credit = t.amount < 0;
         const rowKey = `${scope}:${t.id}`;
     const open = openId === rowKey;
         return (
-          <div className="pld-txn-row" key={rowKey}>
+          <div
+            className={`pld-txn-row${selection.ids.has(t.id) ? " pld-txn-selected" : ""}`}
+            key={rowKey}
+            data-scope={scope}
+            data-txn-id={t.id}
+          >
             <button
               className={`pld-txn${t.hidden ? " pld-txn-hidden" : ""}`}
               aria-expanded={open}
+              // Keeps a shift-click from also highlighting text.
+              onMouseDown={(e) => {
+                if (e.shiftKey) e.preventDefault();
+              }}
               onClick={(e) => {
+          if (e.shiftKey) return selectRange(scope, t.id);
+          if (e.metaKey || e.ctrlKey || selection.count > 0) {
+            toggleSelected(t.id);
+            setAnchor({ scope, id: t.id });
+            return;
+          }
           // Tapping the category label goes straight to the category picker.
           if ((e.target as HTMLElement).closest("[data-category]")) {
             setOpenId(rowKey);
@@ -1333,46 +1470,48 @@ export default function PlaidPage() {
                         </button>
                         {expanded && (
                           <div className="pld-bucket">
-                            {c.merchants.map((m) => {
-                              if (m.items.length === 1) return renderTransaction(m.items[0], "bucket");
-                              const mKey = `${c.name}:${m.key}`;
-                              const mOpen = openMerchants.includes(mKey);
-                              return (
-                                <div className="pld-txn-row" key={mKey}>
-                                  <button
-                                    className="pld-txn"
-                                    aria-expanded={mOpen}
-                                    onClick={() =>
-                                      setOpenMerchants(
-                                        mOpen
-                                          ? openMerchants.filter((x) => x !== mKey)
-                                          : [...openMerchants, mKey]
-                                      )
-                                    }
-                                  >
-                                    <div className="pld-txn-main">
-                                      <div className="pld-txn-name">{m.name}</div>
-                                      <div className="pld-txn-meta">
-                                        {m.items.length} transactions
+                            {c.subs.length === 0 ? (
+                              renderMerchants(c.merchants, c.name)
+                            ) : (
+                              c.subs.map((sub) => {
+                                const subOpen = openCategories.includes(sub.name);
+                                return (
+                                  <div className="pld-sub" key={sub.name}>
+                                    <button
+                                      className="pld-sub-btn"
+                                      aria-expanded={subOpen}
+                                      onClick={() =>
+                                        setOpenCategories(
+                                          subOpen
+                                            ? openCategories.filter((n) => n !== sub.name)
+                                            : [...openCategories, sub.name]
+                                        )
+                                      }
+                                    >
+                                      <span>
+                                        {sub.label}
+                                        <span className="pld-cat-count">
+                                          {sub.countedCount > 0 && ` · ${sub.countedCount}`}
+                                          {sub.hiddenCount > 0 &&
+                                            `${sub.countedCount > 0 ? "," : " ·"} ${sub.hiddenCount} hidden`}
+                                        </span>
+                                      </span>
+                                      <span className="pld-txn-amt-group">
+                                        <span className="pld-mono">{formatMoney(sub.total)}</span>
+                                        <span className="pld-chev" aria-hidden>
+                                          {subOpen ? "▾" : "▸"}
+                                        </span>
+                                      </span>
+                                    </button>
+                                    {subOpen && (
+                                      <div className="pld-bucket">
+                                        {renderMerchants(sub.merchants, sub.name)}
                                       </div>
-                                    </div>
-                                    <span className="pld-txn-amt-group">
-                                      <span className="pld-mono pld-txn-amt">
-                                        {formatMoney(m.total)}
-                                      </span>
-                                      <span className="pld-chev" aria-hidden>
-                                        {mOpen ? "▾" : "▸"}
-                                      </span>
-                                    </span>
-                                  </button>
-                                  {mOpen && (
-                                    <div className="pld-merchant-items">
-                                      {m.items.map((t) => renderTransaction(t, "bucket"))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
                           </div>
                         )}
                       </div>
@@ -1499,6 +1638,23 @@ export default function PlaidPage() {
             </>
           )}
         </div>
+        {selection.count > 0 && (
+          <div className="pld-selbar" role="status">
+            <span>
+              {selection.count} selected
+            </span>
+            <strong className="pld-mono">{formatMoney(selection.total)}</strong>
+            <button
+              className="pld-btn pld-btn-quiet pld-btn-small"
+              onClick={() => {
+                setSelectedIds([]);
+                setAnchor(null);
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

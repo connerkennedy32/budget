@@ -3,6 +3,21 @@ export const HOUSING = "Housing";
 export const TITHING = "Tithing";
 export const SUBSCRIPTION = "Subscription";
 export const INSURANCE = "Insurance";
+export const GROCERIES = "Food and drink > Groceries";
+export const EATING_OUT = "Food and drink > Eating out";
+
+// Plaid's finer-grained food categories, mapped onto the two subcategories.
+// Anything else Plaid files under food and drink stays in the parent.
+export const foodSubcategory = (detailed: string | null | undefined): string | undefined => {
+  if (detailed === "FOOD_AND_DRINK_GROCERIES") return GROCERIES;
+  if (
+    detailed === "FOOD_AND_DRINK_RESTAURANT" ||
+    detailed === "FOOD_AND_DRINK_FAST_FOOD" ||
+    detailed === "FOOD_AND_DRINK_COFFEE"
+  )
+    return EATING_OUT;
+  return undefined;
+};
 
 // Categories that no longer exist, and where they went (keys are lowercase).
 const MERGED_INTO: Record<string, string> = {
@@ -34,8 +49,10 @@ export const isTithing = (...names: Array<string | null | undefined>) =>
 // the exact name (so "American Fork UT" is a different merchant).
 const CATEGORY_BY_NAME: Record<string, string> = {
   "american fork": HOUSING,
-  costco: "Food and drink",
-  target: "Food and drink",
+  costco: GROCERIES,
+  target: GROCERIES,
+  harmons: GROCERIES,
+  maceys: GROCERIES,
   "google play store": SUBSCRIPTION,
   "google one": SUBSCRIPTION,
   netflix: SUBSCRIPTION,
@@ -57,7 +74,7 @@ const CATEGORY_BY_NAME: Record<string, string> = {
   copenhagen: "Travel",
   "gudvangen fjordtel gud": "Travel",
   bergen: "Travel",
-  walmart: "Food and drink",
+  walmart: GROCERIES,
   "usaa insurance payment www.usaa.com": "Transportation",
   "utah dmv delta office": "Transportation",
   sierra: EXTRA,
