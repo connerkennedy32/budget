@@ -75,6 +75,7 @@ type Status = "loading" | "not_linked" | "linked";
 const NON_SPENDING = new Set(["Income", "Transfer in", "Transfer out", "Tithing"]);
 
 const NEW_CATEGORY = "__new__";
+const TITHING_CATEGORY = "Tithing";
 const RULES_KEY = "plaid-category-rules-v1";
 const HIDDEN_KEY = "plaid-hidden-v1";
 // Charges you un-hid that would otherwise start hidden (matched card payments).
@@ -688,6 +689,8 @@ export default function PlaidPage() {
   // (fetched when first picked; keys carry the refresh count so a refresh refetches).
   const [avgMonths, setAvgMonths] = useState<string[]>([]);
   const [monthCache, setMonthCache] = useState<Record<string, RawTransaction[]>>({});
+  // Tithing is set aside rather than spent, so it's left out unless asked for.
+  const [avgTithing, setAvgTithing] = useState(false);
   const [avgError, setAvgError] = useState<string | null>(null);
   const [itemErrors, setItemErrors] = useState<ItemError[]>([]);
   const [connections, setConnections] = useState({ count: 0, canLink: false });
@@ -1096,7 +1099,8 @@ export default function PlaidPage() {
     for (const m of loaded) {
       const all = resolveTransactions(monthCache[`${refresh}:${m}`], manual, m, rules, hiddenIds, shownIds);
       for (const t of all) {
-        if (t.hidden || NON_SPENDING.has(t.category)) continue;
+        if (t.hidden) continue;
+        if (NON_SPENDING.has(t.category) && !(avgTithing && t.category === TITHING_CATEGORY)) continue;
         if (activeFilter !== "all" && t.accountId !== activeFilter) continue;
         totals.set(t.category, (totals.get(t.category) ?? 0) + t.amount);
       }
@@ -1105,7 +1109,7 @@ export default function PlaidPage() {
       .map(([name, sum]) => ({ name, avg: sum / loaded.length }))
       .sort((a, b) => b.avg - a.avg);
     return { rows, total: rows.reduce((sum, r) => sum + r.avg, 0), count: loaded.length };
-  }, [avgMonths, monthCache, refresh, manual, rules, hiddenIds, shownIds, activeFilter]);
+  }, [avgMonths, monthCache, refresh, manual, rules, hiddenIds, shownIds, activeFilter, avgTithing]);
   const avgLoading = avgMonths.some((m) => !monthCache[`${refresh}:${m}`]) && !avgError;
 
   // Charges whose name contains the search text, for "how much at Costco".
@@ -1615,6 +1619,15 @@ export default function PlaidPage() {
                       Clear
                     </button>
                   )}
+                </div>
+                <div className="pld-chips">
+                  <button
+                    className={`pld-chip${avgTithing ? " pld-chip-on" : ""}`}
+                    aria-pressed={avgTithing}
+                    onClick={() => setAvgTithing(!avgTithing)}
+                  >
+                    {avgTithing ? "Tithing included" : "Tithing not included"}
+                  </button>
                 </div>
                 {avgError && <p className="pld-muted">{avgError}</p>}
                 {avgLoading && <p className="pld-muted">Loading months…</p>}
