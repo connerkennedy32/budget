@@ -323,9 +323,11 @@ const CSS = `
     bottom: max(1rem, env(safe-area-inset-bottom)); z-index: 50;
     display: flex; align-items: center; gap: 1rem;
     background: var(--bg); color: var(--text); border: 1px solid var(--gold);
-    border-radius: 999px; padding: 0.5rem 0.6rem 0.5rem 1.1rem;
+    border-radius: 18px; padding: 0.5rem 0.6rem 0.5rem 1.1rem;
+    flex-wrap: wrap; justify-content: center; max-width: calc(100% - 2rem);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); font-size: 0.9rem;
   }
+  .pld-selbar-select { width: auto; min-height: 40px; padding: 0.4rem 0.6rem; font-size: 0.9rem; }
   .pld-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.7rem; }
   .pld-chip {
     font: inherit; font-size: 0.85rem; color: var(--text); background: transparent;
@@ -704,6 +706,8 @@ export default function PlaidPage() {
   // something is picked). The anchor is where a shift-click range starts.
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [anchor, setAnchor] = useState<{ scope: string; id: string } | null>(null);
+  const [bulkChoice, setBulkChoice] = useState("");
+  const [bulkCustom, setBulkCustom] = useState("");
   const [picker, setPicker] = useState<{ key: string; n: number } | null>(null);
   const [data, setData] = useState<{
     month: string;
@@ -1174,6 +1178,50 @@ export default function PlaidPage() {
     return { ids, count: picked.length, total: picked.reduce((sum, t) => sum + t.amount, 0) };
   }, [selectedIds, transactions]);
 
+  const clearSelection = () => {
+    setSelectedIds([]);
+    setAnchor(null);
+    setBulkChoice("");
+    setBulkCustom("");
+  };
+
+  const picked = transactions.filter((t) => selection.ids.has(t.id));
+  const allPickedHidden = picked.length > 0 && picked.every((t) => t.hidden);
+
+  // Hides every picked charge, or, if they're all hidden already, shows them.
+  // Matched card payments start hidden, so showing one is recorded explicitly.
+  const setPickedHidden = (hide: boolean) => {
+    const ids = new Set(picked.map((t) => t.id));
+    const nextHidden = hiddenIds.filter((h) => !ids.has(h));
+    const nextShown = shownIds.filter((x) => !ids.has(x));
+    for (const t of picked) {
+      if (hide) nextHidden.push(t.id);
+      else if (t.defaultHidden) nextShown.push(t.id);
+    }
+    setHiddenIds(nextHidden);
+    setShownIds(nextShown);
+    writeStored(HIDDEN_KEY, nextHidden);
+    writeStored(SHOWN_KEY, nextShown);
+    clearSelection();
+  };
+
+  // Bank charges are categorized by merchant, so this sets the rule for each
+  // picked merchant (it applies to their other charges too). Manual entries
+  // carry their own category.
+  const setPickedCategory = (category: string) => {
+    const name = normalizeCategory(category.trim().slice(0, 40));
+    if (!name) return;
+    const nextRules = { ...rules };
+    for (const t of picked) if (!t.manual) nextRules[ruleKey(t.name)] = name;
+    setRules(nextRules);
+    writeStored(RULES_KEY, nextRules);
+    const manualIds = new Set(picked.filter((t) => t.manual).map((t) => t.id));
+    if (manualIds.size > 0) {
+      saveManual(manual.map((m) => (manualIds.has(m.id) ? { ...m, category: name } : m)));
+    }
+    clearSelection();
+  };
+
   const toggleSelected = (id: string) =>
     setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
@@ -1642,17 +1690,52 @@ export default function PlaidPage() {
         </div>
         {selection.count > 0 && (
           <div className="pld-selbar" role="status">
-            <span>
-              {selection.count} selected
-            </span>
+            <span>{selection.count} selected</span>
             <strong className="pld-mono">{formatMoney(selection.total)}</strong>
             <button
               className="pld-btn pld-btn-quiet pld-btn-small"
-              onClick={() => {
-                setSelectedIds([]);
-                setAnchor(null);
+              onClick={() => setPickedHidden(!allPickedHidden)}
+            >
+              {allPickedHidden ? "Show all" : "Hide all"}
+            </button>
+            <select
+              className="pld-input pld-selbar-select"
+              aria-label="Set category for all selected"
+              value={bulkChoice}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === NEW_CATEGORY || v === "") setBulkChoice(v);
+                else setPickedCategory(v);
               }}
             >
+              <option value="">Set category…</option>
+              {categoryOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+              <option value={NEW_CATEGORY}>New category…</option>
+            </select>
+            {bulkChoice === NEW_CATEGORY && (
+              <>
+                <input
+                  className="pld-input pld-selbar-select"
+                  aria-label="New category name"
+                  placeholder="Category name"
+                  maxLength={40}
+                  value={bulkCustom}
+                  onChange={(e) => setBulkCustom(e.target.value)}
+                />
+                <button
+                  className="pld-btn pld-btn-small"
+                  disabled={bulkCustom.trim() === ""}
+                  onClick={() => setPickedCategory(bulkCustom)}
+                >
+                  Apply
+                </button>
+              </>
+            )}
+            <button className="pld-btn pld-btn-quiet pld-btn-small" onClick={clearSelection}>
               Clear
             </button>
           </div>
